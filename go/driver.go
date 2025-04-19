@@ -56,6 +56,17 @@ const (
 	OptionStringAuthClientSecret          = "adbc.bigquery.sql.auth.client_secret"
 	OptionStringAuthRefreshToken          = "adbc.bigquery.sql.auth.refresh_token"
 	OptionStringAuthQuotaProject          = "adbc.bigquery.sql.auth.quota_project"
+	// OptionStringAuthAccessTokenEndpoint overrides the OAuth token endpoint used when
+	// refreshing access tokens. Defaults to AccessTokenEndpoint.
+	OptionStringAuthAccessTokenEndpoint = "adbc.bigquery.sql.auth.access_token_endpoint"
+	// OptionStringAuthAccessTokenServerName overrides the TLS server name used when
+	// contacting the access token endpoint. Defaults to AccessTokenServerName.
+	OptionStringAuthAccessTokenServerName = "adbc.bigquery.sql.auth.access_token_server_name"
+
+	// OptionValueAuthTypeTemporaryAccessToken instructs the driver to authenticate using
+	// a one-off bearer access token provided directly via OptionStringAuthAccessToken.
+	OptionValueAuthTypeTemporaryAccessToken = "adbc.bigquery.sql.auth_type.temporary_access_token"
+	OptionStringAuthAccessToken             = "adbc.bigquery.sql.auth.access_token"
 
 	// OptionStringQueryParameterMode specifies if the query uses positional syntax ("?")
 	// or the named syntax ("@p"). It is illegal to mix positional and named syntax.

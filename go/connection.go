@@ -50,13 +50,16 @@ import (
 type connectionImpl struct {
 	driverbase.ConnectionImplBase
 
-	authType        string
-	credentialsType option.CredentialsType
-	credentials     string
-	clientID        string
-	clientSecret    string
-	refreshToken    string
-	quotaProject    string
+	authType              string
+	credentialsType       option.CredentialsType
+	credentials           string
+	clientID              string
+	clientSecret          string
+	refreshToken          string
+	accessToken           string
+	accessTokenEndpoint   string
+	accessTokenServerName string
+	quotaProject          string
 
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
@@ -574,6 +577,12 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.clientSecret, nil
 	case OptionStringAuthRefreshToken:
 		return c.refreshToken, nil
+	case OptionStringAuthAccessToken:
+		return c.accessToken, nil
+	case OptionStringAuthAccessTokenEndpoint:
+		return c.accessTokenEndpoint, nil
+	case OptionStringAuthAccessTokenServerName:
+		return c.accessTokenServerName, nil
 	case OptionStringAuthQuotaProject:
 		return c.quotaProject, nil
 	case OptionStringProjectID:
@@ -635,6 +644,12 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 		c.clientSecret = value
 	case OptionStringAuthRefreshToken:
 		c.refreshToken = value
+	case OptionStringAuthAccessToken:
+		c.accessToken = value
+	case OptionStringAuthAccessTokenEndpoint:
+		c.accessTokenEndpoint = value
+	case OptionStringAuthAccessTokenServerName:
+		c.accessTokenServerName = value
 	case OptionStringAuthQuotaProject:
 		c.quotaProject = value
 	case OptionStringImpersonateTargetPrincipal:
@@ -764,7 +779,28 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			}
 		}
 		c.Logger.Debug("Using user OAuth authentication")
+		// Fall back to defaults if access token endpoint / server name not provided.
+		if c.accessTokenEndpoint == "" {
+			c.accessTokenEndpoint = AccessTokenEndpoint
+		}
+		if c.accessTokenServerName == "" {
+			c.accessTokenServerName = AccessTokenServerName
+		}
 		authOptions = append(authOptions, option.WithTokenSource(c))
+	case OptionValueAuthTypeTemporaryAccessToken:
+		if c.accessToken == "" {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthAccessToken),
+			}
+		}
+		c.Logger.Debug("Using temporary access token authentication")
+		authOptions = append(authOptions, option.WithTokenSource(
+			oauth2.StaticTokenSource(&oauth2.Token{
+				AccessToken: c.accessToken,
+				TokenType:   "Bearer",
+			}),
+		))
 	case OptionValueAuthTypeAppDefaultCredentials, OptionValueAuthTypeDefault, "":
 		c.Logger.Debug("Using Application Default Credentials (ADC)", "authType", c.authType)
 		// Use Application Default Credentials (default behavior)
@@ -1143,7 +1179,15 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	params.Add("client_id", c.clientID)
 	params.Add("client_secret", c.clientSecret)
 	params.Add("refresh_token", c.refreshToken)
-	req, err := http.NewRequest("POST", AccessTokenEndpoint, bytes.NewBufferString(params.Encode()))
+	endpoint := c.accessTokenEndpoint
+	if endpoint == "" {
+		endpoint = AccessTokenEndpoint
+	}
+	serverName := c.accessTokenServerName
+	if serverName == "" {
+		serverName = AccessTokenServerName
+	}
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -1151,7 +1195,7 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	req.Header.Set("Accept", "application/json")
 
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{ServerName: AccessTokenServerName},
+		TLSClientConfig: &tls.Config{ServerName: serverName},
 	}
 	client := &http.Client{
 		Transport: tr,

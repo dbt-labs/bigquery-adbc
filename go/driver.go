@@ -69,6 +69,17 @@ const (
 	OptionAuthRefreshToken = "bigquery.auth.refresh_token"
 	OptionAuthQuotaProject = "bigquery.auth.quota_project"
 
+	// OptionStringAuthAccessTokenEndpoint overrides the OAuth token endpoint used when
+	// refreshing access tokens. Defaults to AccessTokenEndpoint.
+	OptionStringAuthAccessTokenEndpoint = "bigquery.auth.access_token_endpoint"
+	// OptionStringAuthAccessTokenServerName overrides the TLS server name used when
+	// contacting the access token endpoint. Defaults to AccessTokenServerName.
+	OptionStringAuthAccessTokenServerName = "bigquery.auth.access_token_server_name"
+	// OptionValueAuthTypeTemporaryAccessToken instructs the driver to authenticate using
+	// a one-off bearer access token provided directly via OptionStringAuthAccessToken.
+	OptionValueAuthTypeTemporaryAccessToken = "temporary_access_token"
+	OptionStringAuthAccessToken             = "bigquery.auth.access_token"
+
 	// OptionQueryParameterMode specifies if the query uses positional syntax ("?")
 	// or the named syntax ("@p"). It is illegal to mix positional and named syntax.
 	// Default is OptionValueQueryParameterModePositional.
@@ -137,6 +148,9 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
+		"adbc.bigquery.sql.auth.access_token":                 OptionStringAuthAccessToken,
+		"adbc.bigquery.sql.auth.access_token_endpoint":        OptionStringAuthAccessTokenEndpoint,
+		"adbc.bigquery.sql.auth.access_token_server_name":     OptionStringAuthAccessTokenServerName,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,
@@ -150,6 +164,7 @@ var (
 		"adbc.bigquery.sql.auth_type.json_credential_string":  OptionValueAuthTypeJSONCredentialString,
 		"adbc.bigquery.sql.auth_type.json_credentials":        OptionValueAuthTypeJSONCredentials,
 		"adbc.bigquery.sql.auth_type.oauth_client_ids":        OptionValueAuthTypeOAuthClientIDs,
+		"adbc.bigquery.sql.auth_type.temporary_access_token":  OptionValueAuthTypeTemporaryAccessToken,
 		"adbc.bigquery.sql.auth_type.user_authentication":     OptionValueAuthTypeUserAuthentication,
 		"adbc.bigquery.sql.dataset_id":                        OptionDatasetID,
 		"adbc.bigquery.sql.endpoint":                          OptionEndpoint,

@@ -95,6 +95,12 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// Legacy CSV ingest options. Prefer the new ADBC ingest API; these are
+	// kept for compatibility with callers from the legacy arrow-adbc driver.
+	OptionStringIngestFileDelimiter = "bigquery.ingest.csv_delimiter"
+	OptionStringIngestPath          = "bigquery.ingest.csv_filepath"
+	OptionStringIngestSchema        = "bigquery.ingest.csv_schema"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -137,6 +143,9 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
+		"adbc.bigquery.ingest.csv_delimiter":                  OptionStringIngestFileDelimiter,
+		"adbc.bigquery.ingest.csv_filepath":                   OptionStringIngestPath,
+		"adbc.bigquery.ingest.csv_schema":                     OptionStringIngestSchema,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,

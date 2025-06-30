@@ -119,6 +119,11 @@ const (
 	OptionStringCopyTableDestination      = "adbc.bigquery.copy_table.destination"
 	OptionStringCopyTableWriteDisposition = "adbc.bigquery.copy_table.write_disposition"
 
+	// OptionJsonUpdateTableColumnsDescription accepts a JSON object
+	// {column: description} to be applied to the destination table
+	// specified by OptionStringQueryDestinationTable.
+	OptionJsonUpdateTableColumnsDescription = "adbc.bigquery.table.update_columns_description"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

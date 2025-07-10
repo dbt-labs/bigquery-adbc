@@ -95,6 +95,12 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// OptionJsonAuthorizeViewToDatasets accepts a JSON object
+	// {view_name: [{project, dataset}, ...]} adding each view as an
+	// authorized view on the listed source datasets. Idempotent — views
+	// already authorized on a dataset are skipped.
+	OptionJsonAuthorizeViewToDatasets = "bigquery.dataset.authorize_view_to_datasets"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -137,6 +143,7 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
+		"adbc.bigquery.dataset.authorize_view_to_datasets":    OptionJsonAuthorizeViewToDatasets,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,

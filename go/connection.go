@@ -858,6 +858,17 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	return nil
 }
 
+// table returns a Table handle for the (project, dataset, table) triple,
+// bound to this connection's BigQuery client.
+func (c *connectionImpl) table(project, dataset, table string) *bigquery.Table {
+	return c.client.DatasetInProject(project, dataset).Table(table)
+}
+
+// datasetInProject returns a Dataset handle bound to this connection's client.
+func (c *connectionImpl) datasetInProject(projectID, datasetID string) *bigquery.Dataset {
+	return c.client.DatasetInProject(projectID, datasetID)
+}
+
 func (c *connectionImpl) hasImpersonationOptions() bool {
 	return c.impersonateTargetPrincipal != "" ||
 		len(c.impersonateDelegates) > 0 ||

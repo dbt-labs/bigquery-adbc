@@ -95,6 +95,10 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// OptionStringQueryLabels accepts a JSON object string mapping label name to value
+	// to attach to the resulting BigQuery query job.
+	OptionStringQueryLabels = "bigquery.query.labels"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -169,6 +173,7 @@ var (
 		"adbc.bigquery.sql.query.disable_query_cache":         OptionQueryDisableQueryCache,
 		"adbc.bigquery.sql.query.dry_run":                     OptionQueryDryRun,
 		"adbc.bigquery.sql.query.job_timeout":                 OptionQueryJobTimeout,
+		"adbc.bigquery.sql.query.labels":                      OptionStringQueryLabels,
 		"adbc.bigquery.sql.query.max_billing_tier":            OptionQueryMaxBillingTier,
 		"adbc.bigquery.sql.query.max_bytes_billed":            OptionQueryMaxBytesBilled,
 		"adbc.bigquery.sql.query.parameter_mode":              OptionQueryParameterMode,

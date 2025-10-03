@@ -97,6 +97,10 @@ const (
 	OptionIntQueryResultBufferSize    = "adbc.bigquery.sql.query.result_buffer_size"
 	OptionIntQueryPrefetchConcurrency = "adbc.bigquery.sql.query.prefetch_concurrency"
 
+	// OptionStringQueryLabels accepts a JSON object string mapping label name to value
+	// to attach to the resulting BigQuery query job.
+	OptionStringQueryLabels = "adbc.bigquery.sql.query.labels"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

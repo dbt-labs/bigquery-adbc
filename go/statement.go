@@ -62,6 +62,10 @@ type statement struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	// Wrap failed-query errors with a link to the BigQuery web console job.
+	// Currently option-storage only; see FINDINGS for the TODO.
+	linkFailedJob bool
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -150,6 +154,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 			return "", err
 		}
 		return string(encoded), nil
+	case OptionBoolQueryLinkFailedJob:
+		return strconv.FormatBool(st.linkFailedJob), nil
 	case OptionStringBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -319,6 +325,12 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.queryConfig.Labels = labels
+	case OptionBoolQueryLinkFailedJob:
+		val, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		st.linkFailedJob = val
 	case OptionStringBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {

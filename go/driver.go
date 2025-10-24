@@ -101,6 +101,11 @@ const (
 	// to attach to the resulting BigQuery query job.
 	OptionStringQueryLabels = "adbc.bigquery.sql.query.labels"
 
+	// OptionBoolQueryLinkFailedJob, when set, instructs the driver to include the
+	// BigQuery web console link to a failed query job in the error message.
+	// (Option is stored but the error-wrapping path is a TODO; see FINDINGS.)
+	OptionBoolQueryLinkFailedJob = "adbc.bigquery.sql.query.link_failed_job"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

@@ -62,6 +62,22 @@ type statement struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	// Python-models: Dataproc job submission / batch submission / GCS write.
+	dataprocRegion         string
+	dataprocProject        string
+	dataprocPoolingTimeout int
+
+	createBatchReqParent   string
+	createBatchReqBatchYML string
+	createBatchReqBatchId  string
+
+	submitJobReqClusterName string
+	submitJobReqGCSPath     string
+
+	writeGCSBucket     string
+	writeGCSObjectName string
+	writeGCSContent    string
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -145,6 +161,26 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionStringDataprocReqRegion:
+		return st.dataprocRegion, nil
+	case OptionStringDataprocReqProject:
+		return st.dataprocProject, nil
+	case OptionStringCreateBatchReqParent:
+		return st.createBatchReqParent, nil
+	case OptionStringCreateBatchReqBatchYML:
+		return st.createBatchReqBatchYML, nil
+	case OptionStringCreateBatchReqBatchId:
+		return st.createBatchReqBatchId, nil
+	case OptionStringDataprocSubmitJobReqClusterName:
+		return st.submitJobReqClusterName, nil
+	case OptionStringDataprocSubmitJobReqGCSPath:
+		return st.submitJobReqGCSPath, nil
+	case OptionStringWriteGCSBucket:
+		return st.writeGCSBucket, nil
+	case OptionStringWriteGCSObjectName:
+		return st.writeGCSObjectName, nil
+	case OptionStringWriteGCSContent:
+		return st.writeGCSContent, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -179,6 +215,8 @@ func (st *statement) GetOptionInt(ctx context.Context, key string) (int64, error
 		return int64(st.resultRecordBufferSize), nil
 	case OptionQueryPrefetchConcurrency:
 		return int64(st.prefetchConcurrency), nil
+	case OptionDataprocPoolingTimeout:
+		return int64(st.dataprocPoolingTimeout), nil
 	default:
 		val, err := st.cnxn.GetOptionInt(ctx, key)
 		if err == nil {
@@ -308,6 +346,26 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		} else {
 			return err
 		}
+	case OptionStringDataprocReqRegion:
+		st.dataprocRegion = v
+	case OptionStringDataprocReqProject:
+		st.dataprocProject = v
+	case OptionStringCreateBatchReqParent:
+		st.createBatchReqParent = v
+	case OptionStringCreateBatchReqBatchYML:
+		st.createBatchReqBatchYML = v
+	case OptionStringCreateBatchReqBatchId:
+		st.createBatchReqBatchId = v
+	case OptionStringDataprocSubmitJobReqClusterName:
+		st.submitJobReqClusterName = v
+	case OptionStringDataprocSubmitJobReqGCSPath:
+		st.submitJobReqGCSPath = v
+	case OptionStringWriteGCSBucket:
+		st.writeGCSBucket = v
+	case OptionStringWriteGCSObjectName:
+		st.writeGCSObjectName = v
+	case OptionStringWriteGCSContent:
+		st.writeGCSContent = v
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -352,6 +410,9 @@ func (st *statement) SetOptionInt(ctx context.Context, key string, value int64) 
 	case OptionQueryPrefetchConcurrency:
 		st.prefetchConcurrency = int(value)
 		return nil
+	case OptionDataprocPoolingTimeout:
+		st.dataprocPoolingTimeout = int(value)
+		return nil
 	default:
 		return adbc.Error{
 			Code: adbc.StatusNotImplemented,
@@ -378,10 +439,17 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
-	if st.ingest.TableName != "" {
+	switch {
+	case st.ingest.TableName != "":
 		n, err := st.executeIngest(ctx)
 		return nil, n, err
-	} else if st.queryConfig.Q == "" {
+	case st.createBatchReqParent != "":
+		return st.executeDataprocCreateBatch(ctx)
+	case st.submitJobReqClusterName != "":
+		return st.executeSubmitJobAsOperation(ctx)
+	case st.writeGCSBucket != "":
+		return st.writeToGCS(ctx)
+	case st.queryConfig.Q == "":
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,

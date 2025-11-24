@@ -95,6 +95,20 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// Dataproc / Python models options — used by callers that submit python
+	// models through this driver.
+	OptionStringDataprocReqRegion               = "bigquery.dataproc.compute_region"
+	OptionStringDataprocReqProject              = "bigquery.dataproc.project"
+	OptionDataprocPoolingTimeout                = "bigquery.dataproc.pooling_timeout"
+	OptionStringCreateBatchReqParent            = "bigquery.create_batch.parent"
+	OptionStringCreateBatchReqBatchYML          = "bigquery.create_batch.batch_yml"
+	OptionStringCreateBatchReqBatchId           = "bigquery.create_batch.batch_id"
+	OptionStringDataprocSubmitJobReqClusterName = "bigquery.dataproc.submit_job.cluster_name"
+	OptionStringDataprocSubmitJobReqGCSPath     = "bigquery.dataproc.submit_job.gcs_path"
+	OptionStringWriteGCSBucket                  = "bigquery.write_gcs.bucket"
+	OptionStringWriteGCSObjectName              = "bigquery.write_gcs.object_name"
+	OptionStringWriteGCSContent                 = "bigquery.write_gcs.content"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -137,6 +151,14 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
+		"adbc.bigquery.create_batch.batch_id":                 OptionStringCreateBatchReqBatchId,
+		"adbc.bigquery.create_batch.batch_yml":                OptionStringCreateBatchReqBatchYML,
+		"adbc.bigquery.create_batch.parent":                   OptionStringCreateBatchReqParent,
+		"adbc.bigquery.dataproc.compute_region":               OptionStringDataprocReqRegion,
+		"adbc.bigquery.dataproc.pooling_timeout":              OptionDataprocPoolingTimeout,
+		"adbc.bigquery.dataproc.project":                      OptionStringDataprocReqProject,
+		"adbc.bigquery.dataproc.submit_job.cluster_name":      OptionStringDataprocSubmitJobReqClusterName,
+		"adbc.bigquery.dataproc.submit_job.gcs_path":          OptionStringDataprocSubmitJobReqGCSPath,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,
@@ -180,6 +202,9 @@ var (
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
 		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
+		"adbc.bigquery.write_gcs.bucket":                      OptionStringWriteGCSBucket,
+		"adbc.bigquery.write_gcs.content":                     OptionStringWriteGCSContent,
+		"adbc.bigquery.write_gcs.object_name":                 OptionStringWriteGCSObjectName,
 	}
 )
 

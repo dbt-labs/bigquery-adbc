@@ -710,14 +710,11 @@ func (c *connectionImpl) SetOptionInt(ctx context.Context, key string, value int
 	}
 }
 
-func (c *connectionImpl) newClient(ctx context.Context) error {
-	if c.catalog == "" {
-		return adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  "[bq] ProjectID is empty",
-		}
-	}
-
+// authOptions builds the slice of google.golang.org/api/option client
+// options reflecting the connection's configured auth type and
+// impersonation/quota settings. Exposed so auxiliary clients (Dataproc, GCS)
+// can be created with the same credentials.
+func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption, error) {
 	authOptions := []option.ClientOption{}
 
 	// First, establish base authentication
@@ -728,7 +725,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			// Auto-detect credential type from the JSON file
 			detected, err := detectCredentialTypeFromFile(c.credentials)
 			if err != nil {
-				return adbc.Error{
+				return nil, adbc.Error{
 					Code: adbc.StatusInvalidArgument,
 					Msg:  fmt.Sprintf("[bq] failed to detect credential type from file %q: %s", c.credentials, err.Error()),
 				}
@@ -743,7 +740,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		if credType == "" {
 			detected, err := detectCredentialTypeFromJSON([]byte(c.credentials))
 			if err != nil {
-				return adbc.Error{
+				return nil, adbc.Error{
 					Code: adbc.StatusInvalidArgument,
 					Msg:  fmt.Sprintf("[bq] failed to detect credential type from JSON: %s", err.Error()),
 				}
@@ -755,19 +752,19 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		authOptions = append(authOptions, option.WithAuthCredentialsJSON(credType, []byte(c.credentials)))
 	case OptionValueAuthTypeUserAuthentication:
 		if c.clientID == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthClientID),
 			}
 		}
 		if c.clientSecret == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthClientSecret),
 			}
 		}
 		if c.refreshToken == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthRefreshToken),
 			}
@@ -782,7 +779,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		c.Logger.Debug("Using anonymous authentication")
 		authOptions = append(authOptions, option.WithoutAuthentication())
 	default:
-		return adbc.Error{
+		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("[bq] unknown auth type: %s", c.authType),
 		}
@@ -796,7 +793,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	// Then, apply impersonation if configured (as a credential transformation layer)
 	if c.hasImpersonationOptions() {
 		if c.impersonateTargetPrincipal == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty for impersonation", OptionImpersonateTargetPrincipal),
 			}
@@ -818,13 +815,29 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impCfg)
 		if err != nil {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] failed to create impersonated token source: %s", err.Error()),
 			}
 		}
 		// Replace any existing token source with the impersonated one
 		authOptions = []option.ClientOption{option.WithTokenSource(tokenSource)}
+	}
+
+	return authOptions, nil
+}
+
+func (c *connectionImpl) newClient(ctx context.Context) error {
+	if c.catalog == "" {
+		return adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] ProjectID is empty",
+		}
+	}
+
+	authOptions, err := c.authOptions(ctx)
+	if err != nil {
+		return err
 	}
 
 	// Add custom endpoint if specified for BigQuery API client

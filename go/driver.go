@@ -95,6 +95,13 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// Copy table options — copy_table.source and copy_table.destination each accept
+	// a `[[project.]dataset.]table` reference; write_disposition takes a standard
+	// BigQuery WRITE_TRUNCATE/WRITE_APPEND/WRITE_EMPTY value.
+	OptionStringCopyTableSource           = "bigquery.copy_table.source"
+	OptionStringCopyTableDestination      = "bigquery.copy_table.destination"
+	OptionStringCopyTableWriteDisposition = "bigquery.copy_table.write_disposition"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -137,6 +144,9 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
+		"adbc.bigquery.copy_table.destination":                OptionStringCopyTableDestination,
+		"adbc.bigquery.copy_table.source":                     OptionStringCopyTableSource,
+		"adbc.bigquery.copy_table.write_disposition":          OptionStringCopyTableWriteDisposition,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,

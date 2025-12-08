@@ -112,6 +112,13 @@ const (
 	// return null over the Storage Read API.
 	OptionBoolUseStorageApiDisabledClient = "adbc.bigquery.sql.query.use_storage_api_disabled_client"
 
+	// Copy table options — copy_table.source and copy_table.destination each accept
+	// a `[[project.]dataset.]table` reference; write_disposition takes a standard
+	// BigQuery WRITE_TRUNCATE/WRITE_APPEND/WRITE_EMPTY value.
+	OptionStringCopyTableSource           = "adbc.bigquery.copy_table.source"
+	OptionStringCopyTableDestination      = "adbc.bigquery.copy_table.destination"
+	OptionStringCopyTableWriteDisposition = "adbc.bigquery.copy_table.write_disposition"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

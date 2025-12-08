@@ -78,6 +78,15 @@ type statement struct {
 	writeGCSBucket     string
 	writeGCSObjectName string
 	writeGCSContent    string
+
+	createNotebookExecuteJobGscPath       string
+	createNotebookExecuteJobModelFileName string
+	createNotebookExecuteJobModelName     string
+	createNotebookExecuteJobGCSBucket     string
+	createNotebookExecuteJobTemplateId    string
+	createNotebookExecuteJobParent        string
+	createNotebookExecuteJobProject       string
+	createNotebookExecuteJobRegion        string
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -181,6 +190,22 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return st.writeGCSObjectName, nil
 	case OptionStringWriteGCSContent:
 		return st.writeGCSContent, nil
+	case OptionStringNotebookExecuteJobGscPath:
+		return st.createNotebookExecuteJobGscPath, nil
+	case OptionStringNotebookExecuteJobModelFileName:
+		return st.createNotebookExecuteJobModelFileName, nil
+	case OptionStringNotebookExecuteJobModelName:
+		return st.createNotebookExecuteJobModelName, nil
+	case OptionStringNotebookExecuteJobGscBucket:
+		return st.createNotebookExecuteJobGCSBucket, nil
+	case OptionStringNotebookExecuteJobTemplateId:
+		return st.createNotebookExecuteJobTemplateId, nil
+	case OptionStringNotebookExecuteJobParent:
+		return st.createNotebookExecuteJobParent, nil
+	case OptionStringNotebookExecuteJobProject:
+		return st.createNotebookExecuteJobProject, nil
+	case OptionStringNotebookExecuteJobRegion:
+		return st.createNotebookExecuteJobRegion, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -447,6 +472,8 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		return st.executeDataprocCreateBatch(ctx)
 	case st.submitJobReqClusterName != "":
 		return st.executeSubmitJobAsOperation(ctx)
+	case st.createNotebookExecuteJobParent != "":
+		return st.executeCreateNotebookExecutionJob(ctx)
 	case st.writeGCSBucket != "":
 		return st.writeToGCS(ctx)
 	case st.queryConfig.Q == "":

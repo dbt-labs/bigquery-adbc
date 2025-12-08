@@ -109,6 +109,17 @@ const (
 	OptionStringWriteGCSObjectName              = "bigquery.write_gcs.object_name"
 	OptionStringWriteGCSContent                 = "bigquery.write_gcs.content"
 
+	// Vertex AI Notebook execution options — used by python models via
+	// bigframes.
+	OptionStringNotebookExecuteJobGscPath       = "bigquery.notebook_execute_job.gsc_path"
+	OptionStringNotebookExecuteJobModelFileName = "bigquery.notebook_execute_job.model_file_name"
+	OptionStringNotebookExecuteJobModelName     = "bigquery.notebook_execute_job.model_name"
+	OptionStringNotebookExecuteJobGscBucket     = "bigquery.notebook_execute_job.gsc_bucket"
+	OptionStringNotebookExecuteJobTemplateId    = "bigquery.notebook_execute_job.template_id"
+	OptionStringNotebookExecuteJobParent        = "bigquery.notebook_execute_job.parent"
+	OptionStringNotebookExecuteJobProject       = "bigquery.notebook_execute_job.project"
+	OptionStringNotebookExecuteJobRegion        = "bigquery.notebook_execute_job.region"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -159,6 +170,14 @@ var (
 		"adbc.bigquery.dataproc.project":                      OptionStringDataprocReqProject,
 		"adbc.bigquery.dataproc.submit_job.cluster_name":      OptionStringDataprocSubmitJobReqClusterName,
 		"adbc.bigquery.dataproc.submit_job.gcs_path":          OptionStringDataprocSubmitJobReqGCSPath,
+		"adbc.bigquery.notebook_execute_job.gsc_bucket":       OptionStringNotebookExecuteJobGscBucket,
+		"adbc.bigquery.notebook_execute_job.gsc_path":         OptionStringNotebookExecuteJobGscPath,
+		"adbc.bigquery.notebook_execute_job.model_file_name":  OptionStringNotebookExecuteJobModelFileName,
+		"adbc.bigquery.notebook_execute_job.model_name":       OptionStringNotebookExecuteJobModelName,
+		"adbc.bigquery.notebook_execute_job.parent":           OptionStringNotebookExecuteJobParent,
+		"adbc.bigquery.notebook_execute_job.project":          OptionStringNotebookExecuteJobProject,
+		"adbc.bigquery.notebook_execute_job.region":           OptionStringNotebookExecuteJobRegion,
+		"adbc.bigquery.notebook_execute_job.template_id":      OptionStringNotebookExecuteJobTemplateId,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,

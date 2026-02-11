@@ -95,6 +95,10 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// OptionStringUpdateTableDescriptionValue sets the table-level
+	// description via Table.Update on the destination table.
+	OptionStringUpdateTableDescriptionValue = "bigquery.table.update_description"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -180,6 +184,7 @@ var (
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
 		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
+		"adbc.bigquery.table.update_description":              OptionStringUpdateTableDescriptionValue,
 	}
 )
 

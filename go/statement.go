@@ -62,6 +62,9 @@ type statement struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	// Table-level description to set on the destination table.
+	tableDescription string
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -145,6 +148,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionStringUpdateTableDescriptionValue:
+		return st.tableDescription, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -308,6 +313,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		} else {
 			return err
 		}
+	case OptionStringUpdateTableDescriptionValue:
+		st.tableDescription = v
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -378,10 +385,13 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
-	if st.ingest.TableName != "" {
+	switch {
+	case st.ingest.TableName != "":
 		n, err := st.executeIngest(ctx)
 		return nil, n, err
-	} else if st.queryConfig.Q == "" {
+	case st.tableDescription != "":
+		return st.executeUpdateTableDescription(ctx)
+	case st.queryConfig.Q == "":
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,

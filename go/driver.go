@@ -44,6 +44,9 @@ const (
 	OptionStringDatasetID     = "adbc.bigquery.sql.dataset_id"
 	OptionStringTableID       = "adbc.bigquery.sql.table_id"
 	OptionStringEndpoint      = "adbc.bigquery.sql.endpoint"
+	// OptionStringAPIEndpoint is a backward-compat alias for OptionStringEndpoint
+	// retained for compatibility with the legacy arrow-adbc bigquery driver.
+	OptionStringAPIEndpoint = "adbc.bigquery.sql.api_endpoint"
 
 	OptionValueAuthTypeDefault = "adbc.bigquery.sql.auth_type.auth_bigquery"
 

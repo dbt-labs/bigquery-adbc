@@ -137,6 +137,7 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
+		"adbc.bigquery.sql.api_endpoint":                      OptionEndpoint,
 		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
 		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
 		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,

@@ -66,6 +66,9 @@ type statement struct {
 	// JSON-encoded {column: description}. When set, ExecuteQuery updates
 	// the destination table's schema in-place with these descriptions.
 	updateTableColumnsDescription string
+	// JSON-encoded {column: [tag_id, ...]}. Combined with the above,
+	// controls which columns get which BigQuery policy tags.
+	updateTableColumnsPolicyTags string
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -151,6 +154,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
 	case OptionJsonUpdateTableColumnsDescription:
 		return st.updateTableColumnsDescription, nil
+	case OptionJsonUpdateTableColumnsPolicyTags:
+		return st.updateTableColumnsPolicyTags, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -316,6 +321,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		}
 	case OptionJsonUpdateTableColumnsDescription:
 		st.updateTableColumnsDescription = v
+	case OptionJsonUpdateTableColumnsPolicyTags:
+		st.updateTableColumnsPolicyTags = v
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -390,7 +397,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 	case st.ingest.TableName != "":
 		n, err := st.executeIngest(ctx)
 		return nil, n, err
-	case st.updateTableColumnsDescription != "":
+	case st.updateTableColumnsDescription != "" || st.updateTableColumnsPolicyTags != "":
 		return st.executeUpdateTableColumnsMetadata(ctx)
 	case st.queryConfig.Q == "":
 		return nil, -1, adbc.Error{

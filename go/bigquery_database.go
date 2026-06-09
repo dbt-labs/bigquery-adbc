@@ -48,6 +48,12 @@ type databaseImpl struct {
 	accessTokenEndpoint   string
 	accessTokenServerName string
 
+	// External-account (Workload Identity Federation) options.
+	externalAccountAudience         string
+	externalAccountImpersonationURL string
+	externalAccountRequestURL       string
+	externalAccountRequestData      string
+
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
 	impersonateScopes          []string
@@ -78,6 +84,11 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		accessToken:                d.accessToken,
 		accessTokenEndpoint:        d.accessTokenEndpoint,
 		accessTokenServerName:      d.accessTokenServerName,
+
+		externalAccountAudience:         d.externalAccountAudience,
+		externalAccountImpersonationURL: d.externalAccountImpersonationURL,
+		externalAccountRequestURL:       d.externalAccountRequestURL,
+		externalAccountRequestData:      d.externalAccountRequestData,
 		impersonateTargetPrincipal: d.impersonateTargetPrincipal,
 		impersonateDelegates:       d.impersonateDelegates,
 		impersonateScopes:          d.impersonateScopes,
@@ -129,6 +140,14 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.accessTokenEndpoint, nil
 	case OptionStringAuthAccessTokenServerName:
 		return d.accessTokenServerName, nil
+	case OptionStringAuthExternalAccountAudience:
+		return d.externalAccountAudience, nil
+	case OptionStringAuthExternalAccountImpersonationURL:
+		return d.externalAccountImpersonationURL, nil
+	case OptionStringAuthExternalAccountRequestURL:
+		return d.externalAccountRequestURL, nil
+	case OptionStringAuthExternalAccountRequestData:
+		return d.externalAccountRequestData, nil
 	case OptionStringAuthQuotaProject:
 		return d.quotaProject, nil
 	case OptionStringLocation:
@@ -213,6 +232,7 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			OptionValueAuthTypeJSONCredentialString,
 			OptionValueAuthTypeUserAuthentication,
 			OptionValueAuthTypeAppDefaultCredentials,
+			OptionValueAuthTypeExternalAccount,
 			OptionValueAuthTypeTemporaryAccessToken:
 			d.authType = value
 		default:
@@ -252,6 +272,14 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.accessTokenEndpoint = value
 	case OptionStringAuthAccessTokenServerName:
 		d.accessTokenServerName = value
+	case OptionStringAuthExternalAccountAudience:
+		d.externalAccountAudience = value
+	case OptionStringAuthExternalAccountImpersonationURL:
+		d.externalAccountImpersonationURL = value
+	case OptionStringAuthExternalAccountRequestURL:
+		d.externalAccountRequestURL = value
+	case OptionStringAuthExternalAccountRequestData:
+		d.externalAccountRequestData = value
 	case OptionStringAuthQuotaProject:
 		d.quotaProject = value
 	case OptionStringImpersonateTargetPrincipal:

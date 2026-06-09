@@ -32,6 +32,7 @@ require (
 	google.golang.org/api v0.293.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688
 	google.golang.org/grpc v1.83.1
+	resty.dev/v3 v3.0.0-beta.6
 )
 
 require (

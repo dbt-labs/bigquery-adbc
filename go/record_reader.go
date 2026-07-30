@@ -112,7 +112,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		})
 	}
 
-	isSelectOrCall := false
+	returnsRows := false
 	stats, statsOk := js.Statistics.Details.(*bigquery.QueryStatistics)
 	if executeUpdate {
 		if statsOk {
@@ -122,7 +122,12 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	} else if query.DryRun {
 		return nil, js, js.Statistics.TotalBytesProcessed, nil
 	} else if statsOk {
-		isSelectOrCall = stats.StatementType == "SELECT" || stats.StatementType == "CALL"
+		// SCRIPT is a multi-statement query (`select 1; select 2`). BigQuery
+		// reports it on the parent job and serves the last statement's result
+		// set, so it returns rows just like a plain SELECT.
+		returnsRows = stats.StatementType == "SELECT" ||
+			stats.StatementType == "CALL" ||
+			stats.StatementType == "SCRIPT"
 	}
 
 	// XXX: the Google SDK badness also applies here; it makes a similar
@@ -151,7 +156,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	if v, ok := ctx.Value(ContextKeyUseStorageApiDisabledClient).(bool); ok {
 		useLegacyAPI = v
 	}
-	if isSelectOrCall {
+	if returnsRows {
 		if useLegacyAPI {
 			arrowIterator = newRowBasedArrowIterator(iter, alloc)
 		} else if !iter.IsAccelerated() {

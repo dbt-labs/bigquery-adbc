@@ -91,7 +91,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		}
 	}
 
-	isSelectOrCall := false
+	returnsRows := false
 	stats, statsOk := js.Statistics.Details.(*bigquery.QueryStatistics)
 	if executeUpdate {
 		if statsOk {
@@ -101,7 +101,12 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	} else if query.DryRun {
 		return nil, js, js.Statistics.TotalBytesProcessed, nil
 	} else if statsOk {
-		isSelectOrCall = stats.StatementType == "SELECT" || stats.StatementType == "CALL"
+		// SCRIPT is a multi-statement query (`select 1; select 2`). BigQuery
+		// reports it on the parent job and serves the last statement's result
+		// set, so it returns rows just like a plain SELECT.
+		returnsRows = stats.StatementType == "SELECT" ||
+			stats.StatementType == "CALL" ||
+			stats.StatementType == "SCRIPT"
 	}
 
 	// XXX: the Google SDK badness also applies here; it makes a similar
@@ -119,7 +124,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// iter.TotalRows == 0 (this is valid as per the API: the field is not
 	// _necessarily_ populated until after a call to Next). Finally we use
 	// job statistics instead
-	if isSelectOrCall {
+	if returnsRows {
 		// !IsAccelerated() -> failed to get Arrow stream -> we are
 		// probably lacking permissions.  readSessionUser may sound
 		// unrelated but creating a "read session" is the first step

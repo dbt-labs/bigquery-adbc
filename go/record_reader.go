@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"sync/atomic"
 
 	"cloud.google.com/go/bigquery"
@@ -37,7 +38,9 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/api/googleapi"
 )
 
 // MetadataKeyBigqueryQueryID is the Arrow schema metadata key under which the
@@ -66,8 +69,18 @@ func checkContext(ctx context.Context, maybeErr error) error {
 	return ctx.Err()
 }
 
-func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool, linkFailedJob bool, alloc memory.Allocator) (bigquery.ArrowIterator, *bigquery.JobStatus, int64, error) {
+func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, executeUpdate bool, linkFailedJob bool, alloc memory.Allocator) (bigquery.ArrowIterator, *bigquery.JobStatus, int64, error) {
+	// A Query can be reused for bound parameter rows. Give every execution its
+	// own ID, then reuse that ID only to recover a duplicate insert response.
+	query.JobID = "adbc-" + uuid.NewString()
+
 	job, err := query.Run(ctx)
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
+		// TODO: the better fix might go to the https://github.com/googleapis/google-cloud-go/blob/b9c76ec52f46f4fb1f1252b4ca159ca3cd2f86fa/bigquery/query.go#L368
+		// this method just invokes insertJob but it should still return the Job when running into the 409 error
+		job, err = client.JobFromIDLocation(ctx, query.JobID, query.Location)
+	}
 	if err != nil {
 		return nil, nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
 	}
@@ -257,8 +270,8 @@ func makeDryRunReader(js *bigquery.JobStatus, jobID string) (array.RecordReader,
 	return rdr, nil
 }
 
-func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, linkFailedJob bool) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
-	arrowIterator, jobStatus, totalRows, err := runQuery(ctx, logger, query, false, linkFailedJob, alloc)
+func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, linkFailedJob bool) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
+	arrowIterator, jobStatus, totalRows, err := runQuery(ctx, logger, client, query, false, linkFailedJob, alloc)
 	if err != nil {
 		return nil, -1, err
 	} else if query.DryRun || arrowIterator == nil {
@@ -311,7 +324,7 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Que
 	return bigqueryRdr, totalRows, nil
 }
 
-func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), linkFailedJob bool) (int64, error) {
+func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, client *bigquery.Client, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), linkFailedJob bool) (int64, error) {
 	totalRows := int64(-1)
 	for i := range int(rec.NumRows()) {
 		parameters, err := getQueryParameter(rec, i, parameterMode)
@@ -322,7 +335,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			query.Parameters = parameters
 		}
 
-		arrowIterator, jobStatus, rows, err := runQuery(ctx, logger, query, false, linkFailedJob, alloc)
+		arrowIterator, jobStatus, rows, err := runQuery(ctx, logger, client, query, false, linkFailedJob, alloc)
 		if err != nil {
 			return -1, err
 		} else if arrowIterator == nil {
@@ -356,9 +369,9 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 
 // kicks off a goroutine for each endpoint and returns a reader which
 // gathers all of the records as they come in.
-func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int, linkFailedJob bool) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
+func newRecordReader(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int, linkFailedJob bool) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
 	if boundParameters == nil {
-		return runPlainQuery(ctx, logger, query, alloc, resultRecordBufferSize, linkFailedJob)
+		return runPlainQuery(ctx, logger, client, query, alloc, resultRecordBufferSize, linkFailedJob)
 	}
 	defer boundParameters.Release()
 
@@ -395,7 +408,7 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Q
 		// Each call to Record() on the record reader is allowed to release the previous record
 		// and since we're doing this sequentially
 		// we don't need to call rec.Retain() here and call call rec.Release() in queryRecordWithSchemaCallback
-		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
+		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, client, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
 			rdr.schema = schema
 		}, linkFailedJob)
 		if err != nil {

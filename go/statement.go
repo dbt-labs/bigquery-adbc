@@ -616,7 +616,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 	}
 
 	ctx = context.WithValue(ctx, ContextKeyUseStorageApiDisabledClient, st.useStorageApiDisabledClient)
-	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st.linkFailedJob)
+	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.queryClient(), st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st.linkFailedJob)
 	st.params = nil
 	return rr, totalRows, err
 }
@@ -631,7 +631,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 
 	ctx = context.WithValue(ctx, ContextKeyUseStorageApiDisabledClient, st.useStorageApiDisabledClient)
 	if st.params == nil {
-		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st.linkFailedJob, st.cnxn.Alloc)
+		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.queryClient(), st.query(), true, st.linkFailedJob, st.cnxn.Alloc)
 		if err != nil {
 			return -1, err
 		}
@@ -653,7 +653,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st.linkFailedJob, st.cnxn.Alloc)
+				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.queryClient(), st.query(), true, st.linkFailedJob, st.cnxn.Alloc)
 				if err != nil {
 					return -1, err
 				}
@@ -730,8 +730,7 @@ func (st *statement) SetSubstraitPlan(ctx context.Context, plan []byte) error {
 	}
 }
 
-func (st *statement) query() *bigquery.Query {
-	var client *bigquery.Client
+func (st *statement) queryClient() *bigquery.Client {
 	if st.useStorageApiDisabledClient {
 		// Lazily create the secondary client. If creation fails for any
 		// reason fall back to the main client; callers that strictly require
@@ -740,14 +739,15 @@ func (st *statement) query() *bigquery.Query {
 		c, err := st.cnxn.getOrCreateStorageApiDisabledClient(context.Background())
 		if err != nil {
 			st.cnxn.Logger.Warn("[bq] failed to create non-storage-api client; falling back", "error", err)
-			client = st.cnxn.client
-		} else {
-			client = c
+			return st.cnxn.client
 		}
-	} else {
-		client = st.cnxn.client
+		return c
 	}
-	query := client.Query("")
+	return st.cnxn.client
+}
+
+func (st *statement) query() *bigquery.Query {
+	query := st.queryClient().Query("")
 	query.QueryConfig = st.queryConfig
 	if sessionId := st.cnxn.sessionID; sessionId != nil && *sessionId != "" {
 		query.ConnectionProperties = append(query.ConnectionProperties, &bigquery.ConnectionProperty{

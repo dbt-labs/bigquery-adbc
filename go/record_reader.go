@@ -160,16 +160,16 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		if useLegacyAPI {
 			arrowIterator = newRowBasedArrowIterator(iter, alloc)
 		} else if !iter.IsAccelerated() {
-			// !IsAccelerated() -> failed to get Arrow stream -> we are
-			// probably lacking permissions.  readSessionUser may sound
-			// unrelated but creating a "read session" is the first step
-			// of using the Storage API.  Note that Google swallows the
-			// real error, so this is the best we can do.
-			// https://cloud.google.com/bigquery/docs/reference/storage#create_a_session
-			return nil, js, -1, wrap(adbc.Error{
-				Code: adbc.StatusUnauthorized,
-				Msg:  "[bq] Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282",
-			})
+			// !IsAccelerated() means no Storage Read session was created —
+			// either a permissions gap (readSessionUser, see
+			// https://github.com/apache/arrow-adbc/issues/3282) or the
+			// Storage API being transiently unavailable (Google swallows
+			// the real reason either way). The row-based reader doesn't
+			// need Storage Read at all, so fall back to it instead of
+			// failing a query/test over a read-path capability gap. See
+			// https://github.com/dbt-labs/dbt-core/issues/15463.
+			logger.WarnContext(ctx, "storage read API not accelerated for query, falling back to row-based reader", "job_id", job.ID())
+			arrowIterator = newRowBasedArrowIterator(iter, alloc)
 		} else {
 			if arrowIterator, err = iter.ArrowIterator(); err != nil {
 				return nil, js, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))

@@ -85,6 +85,11 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		if err == nil || !linkFailedJob {
 			return err
 		}
+		var adbcErr adbc.Error
+		if errors.As(err, &adbcErr) {
+			adbcErr.Msg = fmt.Sprintf("%s (Query: %s)", adbcErr.Msg, jobLink)
+			return adbcErr
+		}
 		return fmt.Errorf("%w (Query: %s)", err, jobLink)
 	}
 

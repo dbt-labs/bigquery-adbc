@@ -76,6 +76,8 @@ jobs:
       repository: ${{ needs.setup.outputs.repository }}
       ref: ${{ inputs.ref }}
     permissions:
+      contents: read
+      packages: read
       id-token: write
     secrets:
       # https://github.com/orgs/community/discussions/25238#discussioncomment-3247035

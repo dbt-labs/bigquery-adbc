@@ -76,8 +76,11 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 
 	job, err := query.Run(ctx)
 	var apiErr *googleapi.Error
+	// 409 error code returns when trying to create a job, dataset, or table that already exists.
+	// https://docs.cloud.google.com/bigquery/docs/error-messages
 	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
-		// TODO: the better fix might go to the https://github.com/googleapis/google-cloud-go/blob/b9c76ec52f46f4fb1f1252b4ca159ca3cd2f86fa/bigquery/query.go#L368
+		// TODO: Making an additional call to retrieve a Job that the API assures already exists is suboptimal.
+		// the better fix might go to the https://github.com/googleapis/google-cloud-go/blob/b9c76ec52f46f4fb1f1252b4ca159ca3cd2f86fa/bigquery/query.go#L368
 		// this method just invokes insertJob but it should still return the Job when running into the 409 error
 		job, err = client.JobFromIDLocation(ctx, query.JobID, query.Location)
 	}

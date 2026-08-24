@@ -23,7 +23,13 @@
 package bigquery
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -31,6 +37,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/option"
 )
 
 func TestEmptyArrowIteratorNext(t *testing.T) {
@@ -167,5 +174,86 @@ func sampleJobStatistics() *bigquery.JobStatistics {
 			DDLOperationPerformed:         "CREATE_TABLE",
 			ExportDataStatistics:          &bigquery.ExportDataStatistics{FileCount: 4, RowCount: 5},
 		},
+	}
+}
+
+// Ported from dbt-labs/arrow-adbc#153.
+func TestRunQueryRecoversExistingJobAfterDuplicateInsert(t *testing.T) {
+	const (
+		projectID = "test-project"
+		location  = "us-west1"
+	)
+
+	submittedJobIDs := make(map[string]struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/bigquery/v2/projects/test-project/jobs":
+			var submitted struct {
+				JobReference struct {
+					JobID string `json:"jobId"`
+				} `json:"jobReference"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
+				t.Fatalf("decode submitted job: %v", err)
+			}
+			submittedJobID := submitted.JobReference.JobID
+			if submittedJobID == "" {
+				t.Fatal("expected the driver to submit a job ID")
+			}
+			if _, exists := submittedJobIDs[submittedJobID]; exists {
+				t.Errorf("expected a distinct job ID for each execution, got %q twice", submittedJobID)
+			}
+			submittedJobIDs[submittedJobID] = struct{}{}
+
+			w.WriteHeader(http.StatusConflict)
+			_, _ = fmt.Fprint(w, `{"error":{"code":409,"message":"Already Exists: Job duplicate"}}`)
+
+		case r.Method == http.MethodGet && r.URL.Path[:len("/bigquery/v2/projects/test-project/jobs/")] == "/bigquery/v2/projects/test-project/jobs/":
+			submittedJobID := r.URL.Path[len("/bigquery/v2/projects/test-project/jobs/"):]
+			_, _ = fmt.Fprintf(w, `{"configuration":{"query":{"query":"SELECT 1","useLegacySql":false}},"jobReference":{"projectId":%q,"location":%q,"jobId":%q},"status":{"state":"DONE"},"statistics":{"creationTime":"1700000000000","startTime":"1700000000100","endTime":"1700000000200"}}`, projectID, location, submittedJobID)
+
+		case r.Method == http.MethodGet && r.URL.Path[:len("/bigquery/v2/projects/test-project/queries/")] == "/bigquery/v2/projects/test-project/queries/":
+			submittedJobID := r.URL.Path[len("/bigquery/v2/projects/test-project/queries/"):]
+			_, _ = fmt.Fprintf(w, `{"jobComplete":true,"jobReference":{"projectId":%q,"location":%q,"jobId":%q},"schema":{"fields":[]},"totalRows":"0"}`, projectID, location, submittedJobID)
+
+		default:
+			t.Fatalf("unexpected BigQuery request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := bigquery.NewClient(
+		context.Background(),
+		projectID,
+		option.WithEndpoint(srv.URL+"/bigquery/v2/"),
+		option.WithHTTPClient(srv.Client()),
+		option.WithoutAuthentication(),
+	)
+	if err != nil {
+		t.Fatalf("create BigQuery client: %v", err)
+	}
+	defer client.Close()
+
+	query := client.Query("SELECT 1")
+	query.Location = location
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.WithValue(context.Background(), ContextKeyUseStorageApiDisabledClient, false)
+	for range 2 {
+		iterator, _, rows, err := runQuery(ctx, logger, client, query, false, false, memory.DefaultAllocator)
+		if err != nil {
+			t.Fatalf("run query after duplicate insert: %v", err)
+		}
+		if iterator == nil {
+			t.Fatal("expected an iterator for the recovered job")
+		}
+		if rows != 0 {
+			t.Fatalf("expected zero rows, got %d", rows)
+		}
+	}
+	if len(submittedJobIDs) != 2 {
+		t.Fatalf("expected two distinct submitted job IDs, got %d", len(submittedJobIDs))
 	}
 }

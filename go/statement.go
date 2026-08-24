@@ -388,7 +388,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
-	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
+	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.cnxn.client, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
 	st.params = nil
 	return rr, totalRows, err
 }
@@ -402,7 +402,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 	}
 
 	if st.params == nil {
-		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.cnxn.client, st.query(), true)
 		if err != nil {
 			return -1, err
 		}
@@ -424,7 +424,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.cnxn.client, st.query(), true)
 				if err != nil {
 					return -1, err
 				}

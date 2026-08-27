@@ -39,8 +39,10 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/google/uuid"
+	"github.com/googleapis/gax-go/v2/apierror"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/grpc/codes"
 )
 
 // MetadataKeyBigqueryQueryID is the Arrow schema metadata key under which the
@@ -133,7 +135,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 		})
 	}
 
-	returnsRows := false
+	mayReturnResults := false
 	stats, statsOk := js.Statistics.Details.(*bigquery.QueryStatistics)
 	if executeUpdate {
 		if statsOk {
@@ -143,12 +145,8 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	} else if query.DryRun {
 		return nil, js, js.Statistics.TotalBytesProcessed, nil
 	} else if statsOk {
-		// SCRIPT is a multi-statement query (`select 1; select 2`). BigQuery
-		// reports it on the parent job and serves the last statement's result
-		// set, so it returns rows just like a plain SELECT.
-		returnsRows = stats.StatementType == "SELECT" ||
-			stats.StatementType == "CALL" ||
-			stats.StatementType == "SCRIPT"
+		// note that SCRIPT doesn't always have results. we catch this below
+		mayReturnResults = stats.StatementType == "SELECT" || stats.StatementType == "CALL" || stats.StatementType == "SCRIPT"
 	}
 
 	// XXX: the Google SDK badness also applies here; it makes a similar
@@ -177,22 +175,24 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	if v, ok := ctx.Value(ContextKeyUseStorageApiDisabledClient).(bool); ok {
 		useLegacyAPI = v
 	}
-	if returnsRows {
+	if mayReturnResults {
 		if useLegacyAPI {
 			arrowIterator = newRowBasedArrowIterator(iter, alloc)
-		} else if !iter.IsAccelerated() {
-			// !IsAccelerated() -> failed to get Arrow stream -> we are
-			// probably lacking permissions.  readSessionUser may sound
-			// unrelated but creating a "read session" is the first step
-			// of using the Storage API.  Note that Google swallows the
-			// real error, so this is the best we can do.
-			// https://cloud.google.com/bigquery/docs/reference/storage#create_a_session
-			return nil, js, -1, wrap(adbc.Error{
-				Code: adbc.StatusUnauthorized,
-				Msg:  "[bq] Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282",
-			})
-		} else {
-			if arrowIterator, err = iter.ArrowIterator(); err != nil {
+		} else if arrowIterator, err = iter.ArrowIterator(); err != nil {
+			if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
+				// Script job with no results
+				// N.B. BigQuery SDK doesn't give a structured error - it's a fmt.Errorf
+				arrowIterator = emptyArrowIterator{iter.Schema}
+			} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok && apiErr.GRPCStatus() != nil && apiErr.GRPCStatus().Code() == codes.PermissionDenied {
+				// Preserve the previous error
+				// message. readSessionUser may sound
+				// unrelated but creating a "read session" is
+				// the first step of using the Storage API.
+				return nil, js, -1, wrap(adbc.Error{
+					Code: adbc.StatusUnauthorized,
+					Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
+				})
+			} else {
 				return nil, js, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
 			}
 		}

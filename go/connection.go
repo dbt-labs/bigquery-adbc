@@ -1474,6 +1474,18 @@ func (c *connectionImpl) Token() (*oauth2.Token, error) {
 	}, nil
 }
 
+// newTokenExchangeTransport returns the transport for OAuth token-exchange
+// requests. A custom http.Transport defaults Proxy to nil, unlike
+// http.DefaultTransport, so it must be set explicitly for the token exchange
+// to honor HTTPS_PROXY/NO_PROXY like the rest of the driver's HTTP traffic.
+// See dbt-labs/dbt-core#14470.
+func newTokenExchangeTransport(serverName string) *http.Transport {
+	return &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{ServerName: serverName},
+	}
+}
+
 func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	params := url.Values{}
 	params.Add("grant_type", "refresh_token")
@@ -1498,11 +1510,8 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{ServerName: serverName},
-	}
 	client := &http.Client{
-		Transport: tr,
+		Transport: newTokenExchangeTransport(serverName),
 	}
 	resp, err := client.Do(req)
 	if err != nil {

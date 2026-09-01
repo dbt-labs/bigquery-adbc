@@ -1041,8 +1041,13 @@ func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption
 // withBigQueryRESTEndpoint overwrites the BigQuery SDK's own default
 // endpoint with a custom one, appending the REST API's base path so the
 // override still routes somewhere real.
+//
+// Safety: assumes endpoint was set via databaseImpl.SetOption, which
+// validates it parses as an http(s) URL. Not safe for arbitrary/unsanitized
+// endpoint values.
 func withBigQueryRESTEndpoint(endpoint string) option.ClientOption {
-	return option.WithEndpoint(endpoint + "bigquery/v2/")
+	joined, _ := url.JoinPath(endpoint, "bigquery/v2/")
+	return option.WithEndpoint(joined)
 }
 
 func (c *connectionImpl) newClient(ctx context.Context) error {

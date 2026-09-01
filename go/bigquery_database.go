@@ -317,6 +317,19 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 	case OptionDatasetID:
 		d.datasetID = value
 	case OptionEndpoint, OptionStringAPIEndpoint:
+		parsed, err := url.Parse(value)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] %s must start with 'http://' or 'https://', got %q", key, value),
+			}
+		}
+		if !strings.HasSuffix(value, "/") {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] %s is missing a trailing '/': %q (try %q)", key, value, value+"/"),
+			}
+		}
 		d.endpoint = value
 	case OptionStorageEndpoint:
 		d.storageEndpoint = value

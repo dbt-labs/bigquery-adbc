@@ -1038,6 +1038,18 @@ func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption
 	return authOptions, nil
 }
 
+// withBigQueryRESTEndpoint overwrites the BigQuery SDK's own default
+// endpoint with a custom one, appending the REST API's base path so the
+// override still routes somewhere real.
+//
+// Safety: assumes endpoint was set via databaseImpl.SetOption, which
+// validates it parses as an http(s) URL. Not safe for arbitrary/unsanitized
+// endpoint values.
+func withBigQueryRESTEndpoint(endpoint string) option.ClientOption {
+	joined, _ := url.JoinPath(endpoint, "bigquery/v2/")
+	return option.WithEndpoint(joined)
+}
+
 func (c *connectionImpl) newClient(ctx context.Context) error {
 	if c.catalog == "" {
 		return adbc.Error{
@@ -1053,7 +1065,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 	bigQueryAuthOptions := authOptions
 	if c.endpoint != "" {
-		bigQueryAuthOptions = append(bigQueryAuthOptions, option.WithEndpoint(c.endpoint))
+		bigQueryAuthOptions = append(bigQueryAuthOptions, withBigQueryRESTEndpoint(c.endpoint))
 	}
 
 	client, err := bigquery.NewClient(ctx, c.catalog, bigQueryAuthOptions...)
@@ -1110,7 +1122,7 @@ func (c *connectionImpl) getOrCreateStorageApiDisabledClient(ctx context.Context
 		return nil, err
 	}
 	if c.endpoint != "" {
-		authOptions = append(authOptions, option.WithEndpoint(c.endpoint))
+		authOptions = append(authOptions, withBigQueryRESTEndpoint(c.endpoint))
 	}
 	client, err := bigquery.NewClient(ctx, c.catalog, authOptions...)
 	if err != nil {

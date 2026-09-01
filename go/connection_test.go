@@ -15,9 +15,15 @@
 package bigquery
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
+
+	"cloud.google.com/go/bigquery"
+	"google.golang.org/api/option"
 )
 
 // getAccessToken previously built its transport without a Proxy function,
@@ -51,5 +57,47 @@ func TestGetAccessTokenReturnsErrorOnRequestFailure(t *testing.T) {
 	}
 	if _, err := conn.getAccessToken(); err == nil {
 		t.Fatal("expected an error for an unreachable token endpoint")
+	}
+}
+
+// TestAPIEndpointRoutesToBigQueryV2Path confirms, through the real
+// google-cloud-go BigQuery client, that a conforming apiEndpoint
+// ("scheme://host[:port]/") is routed under "/bigquery/v2/".
+func TestAPIEndpointRoutesToBigQueryV2Path(t *testing.T) {
+	paths := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case paths <- r.URL.Path:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jobComplete":true,"jobReference":{"jobId":"x"},"schema":{"fields":[]},"rows":[]}`))
+	}))
+	defer srv.Close()
+
+	client, err := bigquery.NewClient(context.Background(), "test-proj",
+		withBigQueryRESTEndpoint(srv.URL+"/"),
+		option.WithHTTPClient(srv.Client()),
+		option.WithoutAuthentication(),
+	)
+	if err != nil {
+		t.Fatalf("bigquery.NewClient returned error: %v", err)
+	}
+	defer client.Close()
+
+	q := client.Query("SELECT 1")
+	it, err := q.Read(context.Background())
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	_ = it
+
+	select {
+	case p := <-paths:
+		if !strings.HasPrefix(p, "/bigquery/v2/") {
+			t.Fatalf("expected request path under /bigquery/v2/, got %q", p)
+		}
+	default:
+		t.Fatal("server did not receive a request")
 	}
 }

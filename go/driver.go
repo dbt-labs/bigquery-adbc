@@ -144,13 +144,6 @@ const (
 	// return null over the Storage Read API.
 	OptionBoolUseStorageApiDisabledClient = "adbc.bigquery.sql.query.use_storage_api_disabled_client"
 
-	// ContextKeyUseStorageApiDisabledClient signals to runQuery via
-	// context that it should fall back to the row-based iterator
-	// (bigquery.RowIterator + rowsToArrowRecordBatch) instead of the
-	// Storage Read API, so pseudo-columns like _PARTITIONDATE return
-	// values instead of nulls.
-	ContextKeyUseStorageApiDisabledClient = "USE_STORAGE_API_DISABLED_CLIENT"
-
 	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
 	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
 	// Copy table options — copy_table.source and copy_table.destination each accept
@@ -257,6 +250,16 @@ const (
 	OptionValueCompressionLZ4   = "lz4"
 	OptionValueCompressionZSTD  = "zstd"
 )
+
+// contextKey namespaces context values set by this driver, so they can't
+// collide with keys from other packages sharing the same context.
+type contextKey string
+
+// ContextKeyUseStorageApiDisabledClient signals to runQuery via context that
+// it should fall back to the row-based iterator (bigquery.RowIterator +
+// rowsToArrowRecordBatch) instead of the Storage Read API, so pseudo-columns
+// like _PARTITIONDATE return values instead of nulls.
+const ContextKeyUseStorageApiDisabledClient contextKey = "USE_STORAGE_API_DISABLED_CLIENT"
 
 var (
 	infoVendorVersion string

@@ -27,6 +27,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,6 +44,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google/externalaccount"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -148,7 +150,6 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 		if schemaPattern.MatchString(ds.DatasetID) {
 			res = append(res, ds.DatasetID)
 		}
-
 	}
 
 	return res, nil
@@ -180,6 +181,13 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 		md, err := table.Metadata(ctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
 		if err != nil {
+			if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
+				// "User does not have permission to access results of another user's job"
+				// No sense in erroring the entire list operation; just treat it as nonexistent
+
+				// Similarly a 404 probably just means a TOC/TOU error and we can proceed
+				continue
+			}
 			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
 		}
 

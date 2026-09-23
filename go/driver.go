@@ -119,6 +119,11 @@ const (
 	OptionQueryDryRun                  = "bigquery.query.dry_run"
 	OptionQueryCreateSession           = "bigquery.query.create_session"
 	OptionQueryJobTimeout              = "bigquery.query.job_timeout"
+	// OptionQueryReservation specifies the BigQuery reservation to use for query
+	// execution. The value must be a full reservation resource path of the form
+	// "projects/<project>/locations/<location>/reservations/<reservation>".
+	// When set, the query job is submitted under the specified reservation.
+	OptionQueryReservation = "bigquery.query.reservation"
 
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
@@ -302,6 +307,7 @@ var (
 		"adbc.bigquery.sql.query.parameter_mode_positional":   OptionValueQueryParameterModePositional,
 		"adbc.bigquery.sql.query.prefetch_concurrency":        OptionQueryPrefetchConcurrency,
 		"adbc.bigquery.sql.query.priority":                    OptionQueryPriority,
+		"adbc.bigquery.sql.query.reservation":                 OptionQueryReservation,
 		"adbc.bigquery.sql.query.result_buffer_size":          OptionQueryResultBufferSize,
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,

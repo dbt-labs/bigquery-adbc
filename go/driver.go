@@ -307,7 +307,6 @@ var (
 		"adbc.bigquery.sql.query.parameter_mode_positional":   OptionValueQueryParameterModePositional,
 		"adbc.bigquery.sql.query.prefetch_concurrency":        OptionQueryPrefetchConcurrency,
 		"adbc.bigquery.sql.query.priority":                    OptionQueryPriority,
-		"adbc.bigquery.sql.query.reservation":                 OptionQueryReservation,
 		"adbc.bigquery.sql.query.result_buffer_size":          OptionQueryResultBufferSize,
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,

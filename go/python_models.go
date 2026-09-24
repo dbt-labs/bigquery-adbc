@@ -87,7 +87,7 @@ func (st *statement) executeDataprocCreateBatch(ctx context.Context) (array.Reco
 	if err != nil {
 		return nil, -1, fmt.Errorf("[bq] create Dataproc client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	req := &dataprocpb.CreateBatchRequest{
 		Parent:  st.createBatchReqParent,
@@ -113,7 +113,7 @@ func (st *statement) executeSubmitJobAsOperation(ctx context.Context) (array.Rec
 	if err != nil {
 		return nil, -1, fmt.Errorf("[bq] create Dataproc JobController client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	req := &dataprocpb.SubmitJobRequest{
 		ProjectId: st.dataprocProject,
@@ -194,7 +194,7 @@ func (c *connectionImpl) addExecutionIdentityDetails(ctx context.Context, job *a
 		if err != nil {
 			return nil, fmt.Errorf("build http transport: %w", err)
 		}
-		var tokenSource oauth2.TokenSource = oauth2.StaticTokenSource(&oauth2.Token{})
+		tokenSource := oauth2.StaticTokenSource(&oauth2.Token{})
 		if t, ok := ts.Transport.(*oauth2.Transport); ok {
 			tokenSource = t.Source
 		}
@@ -211,7 +211,7 @@ func (c *connectionImpl) addExecutionIdentityDetails(ctx context.Context, job *a
 		if err != nil {
 			return nil, fmt.Errorf("call userinfo: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
@@ -246,7 +246,7 @@ func (st *statement) getNotebookTemplateName(ctx context.Context) (string, error
 	if err != nil {
 		return "", fmt.Errorf("[bq] create notebook client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	req := &aiplatformpb.ListNotebookRuntimeTemplatesRequest{
 		Parent: st.createNotebookExecuteJobParent,
@@ -289,7 +289,7 @@ func (st *statement) executeCreateNotebookExecutionJob(ctx context.Context) (arr
 	if err != nil {
 		return nil, -1, fmt.Errorf("[bq] create notebook client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	templateName := ""
 	if st.createNotebookExecuteJobTemplateId != "" {
@@ -334,11 +334,11 @@ func (st *statement) executeCreateNotebookExecutionJob(ctx context.Context) (arr
 
 	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(st.dataprocPoolingTimeout)*time.Second)
 	defer cancel()
-	retrievedJob, err := op.Wait(waitCtx)
-	if err != nil {
+	if _, err = op.Wait(waitCtx); err != nil {
 		return nil, -1, fmt.Errorf("[bq] notebook execution op: %w", err)
 	}
 
+	var retrievedJob *aiplatformpb.NotebookExecutionJob
 	elapsed := time.Duration(0)
 	for {
 		retrievedJob, err = client.GetNotebookExecutionJob(ctx, &aiplatformpb.GetNotebookExecutionJobRequest{Name: jobName})
@@ -366,7 +366,7 @@ func (st *statement) executeCreateNotebookExecutionJob(ctx context.Context) (arr
 
 	gcsClient, err := st.cnxn.newGCSClient(ctx)
 	if err == nil {
-		defer gcsClient.Close()
+		defer func() { _ = gcsClient.Close() }()
 		if data, err := readJSONFromGCS(ctx, gcsLogURI, gcsClient); err == nil && data != nil {
 			processGCSNotebookLog(st.cnxn.Logger, data)
 		}
@@ -392,7 +392,7 @@ func readJSONFromGCS(ctx context.Context, gcsURI string, storageClient *storage.
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	content, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
@@ -443,7 +443,7 @@ func (st *statement) writeToGCS(ctx context.Context) (array.RecordReader, int64,
 	if err != nil {
 		return nil, -1, fmt.Errorf("[bq] create GCS client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	wc := client.Bucket(st.writeGCSBucket).Object(st.writeGCSObjectName).NewWriter(ctx)
 	if _, err := wc.Write([]byte(st.writeGCSContent)); err != nil {

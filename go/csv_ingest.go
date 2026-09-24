@@ -50,7 +50,7 @@ func (st *statement) executeCSVIngest(ctx context.Context) (array.RecordReader, 
 	if err != nil {
 		return nil, -1, fmt.Errorf("[bq] open %q: %w", st.ingestPath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if st.queryConfig.Dst == nil {
 		return nil, -1, adbc.Error{

@@ -119,6 +119,11 @@ const (
 	OptionQueryDryRun                  = "bigquery.query.dry_run"
 	OptionQueryCreateSession           = "bigquery.query.create_session"
 	OptionQueryJobTimeout              = "bigquery.query.job_timeout"
+	// OptionQueryReservation specifies the BigQuery reservation to use for query
+	// execution. The value must be a full reservation resource path of the form
+	// "projects/<project>/locations/<location>/reservations/<reservation>".
+	// When set, the query job is submitted under the specified reservation.
+	OptionQueryReservation = "bigquery.query.reservation"
 
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"

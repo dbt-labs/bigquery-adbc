@@ -206,6 +206,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionQueryReservation:
+		return st.queryConfig.Reservation, nil
 	case OptionStringQueryLabels:
 		encoded, err := json.Marshal(st.queryConfig.Labels)
 		if err != nil {
@@ -435,6 +437,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		} else {
 			return err
 		}
+	case OptionQueryReservation:
+		st.queryConfig.Reservation = v
 	case OptionStringQueryLabels:
 		var labels map[string]string
 		if err := json.Unmarshal([]byte(v), &labels); err != nil {

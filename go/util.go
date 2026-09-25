@@ -81,7 +81,7 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job)
 			// here because job.Status does not behave like job.Wait
 			// and does not put the job's error into the API call's
 			// error.
-			if isRetryableError(err) {
+			if isRetryableError(err, jobStatusRetryReasons) {
 				duration := backoff.Pause()
 				logger.DebugContext(ctx, "retry job", "id", job.ID(), "backoff", duration, "error", err)
 				if err := gax.Sleep(ctx, duration); err != nil {
@@ -108,8 +108,23 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job)
 	return
 }
 
-func isRetryableError(err error) bool {
-	// Modeled on retryableError in bigquery.go
+var (
+	// jobStatusRetryReasons are the error reasons retried when polling job
+	// status. rateLimitExceeded is deliberately absent: a job that fails with
+	// it would otherwise be polled forever (see safeWaitForJob).
+	jobStatusRetryReasons = []string{"backendError", "internalError"}
+
+	// tablesListRetryReasons are the reasons bigquery.Client retries for
+	// tables.list (defaultRetryReasons). A tables.list request has no job
+	// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/bigquery.go#L254-L255
+	tablesListRetryReasons = []string{"backendError", "rateLimitExceeded"}
+)
+
+// isRetryableError reports whether err is transient, retrying structured
+// errors whose first reason is in retryableReasons.
+func isRetryableError(err error, retryableReasons []string) bool {
+	// Modeled on retryableError in bigquery.go:
+	// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/bigquery.go#L269-L325
 	switch {
 	case err == nil:
 		return false
@@ -119,7 +134,6 @@ func isRetryableError(err error) bool {
 		return true
 	}
 
-	retryableReasons := []string{"backendError", "internalError"}
 	switch e := err.(type) {
 	case *googleapi.Error:
 		var reason string
@@ -148,7 +162,7 @@ func isRetryableError(err error) bool {
 		}
 	}
 
-	return isRetryableError(errors.Unwrap(err))
+	return isRetryableError(errors.Unwrap(err), retryableReasons)
 }
 
 // errToAdbcErr converts an error to an ADBC error, using the metadata from

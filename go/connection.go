@@ -369,7 +369,8 @@ var tablesListBackoff = gax.Backoff{
 // doWithRetry runs a REST call with the retries bigquery.Client applies to its
 // own tables.list calls (listTables wraps call.Do in runWithRetry), since a
 // generated call's Do sends the request exactly once
-// (gensupport.SendRequest, no retry loop):
+// (gensupport.SendRequest, no retry loop). Errors are classified by
+// isRetryableError with tablesListRetryReasons (util.go):
 // https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/dataset.go#L658-L675
 // https://github.com/googleapis/google-api-go-client/blob/v0.287.1/internal/gensupport/send.go#L85-L97
 //
@@ -382,7 +383,9 @@ func doWithRetry[T any](ctx context.Context, do func(...googleapi.CallOption) (T
 		res, lastErr = do()
 		return lastErr
 	}, gax.WithRetry(func() gax.Retryer {
-		return gax.OnErrorFunc(tablesListBackoff, isRetryableTablesListError)
+		return gax.OnErrorFunc(tablesListBackoff, func(err error) bool {
+			return isRetryableError(err, tablesListRetryReasons)
+		})
 	}))
 	if err != nil && lastErr != nil && !errors.Is(err, lastErr) {
 		// ctx was done while waiting to retry. Keep the API error as well, like
@@ -395,65 +398,6 @@ func doWithRetry[T any](ctx context.Context, do func(...googleapi.CallOption) (T
 	// the original error instead:
 	// https://github.com/googleapis/gax-go/blob/v2.23.0/v2/invoke.go#L121-L123
 	return res, lastErr
-}
-
-// isRetryableTablesListError is retryableError from cloud.google.com/go/bigquery
-// with the reasons bigquery.Client retries for tables.list (defaultRetryReasons):
-// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/bigquery.go#L254-L325
-//
-// It differs from isRetryableError (util.go), which is tuned for polling job
-// status and retries internalError instead of rateLimitExceeded.
-func isRetryableTablesListError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if err == io.ErrUnexpectedEOF {
-		return true
-	}
-	// Special case due to http2: https://github.com/googleapis/google-cloud-go/issues/1793
-	// Due to Go's default being higher for streams-per-connection than is accepted by the
-	// BQ backend, it's possible to get streams refused immediately after a connection is
-	// started but before we receive SETTINGS frame from the backend.  This generally only
-	// happens when we try to enqueue > 100 requests onto a newly initiated connection.
-	if err.Error() == "http2: stream closed" {
-		return true
-	}
-	if err.Error() == "http2: client connection lost" {
-		return true
-	}
-
-	switch e := err.(type) {
-	case *googleapi.Error:
-		// We received a structured error from backend.
-		if len(e.Errors) > 0 {
-			reason := e.Errors[0].Reason
-			if reason == "backendError" || reason == "rateLimitExceeded" {
-				return true
-			}
-		}
-		switch e.Code {
-		case http.StatusInternalServerError, http.StatusBadGateway,
-			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			return true
-		}
-	case *url.Error:
-		retryable := []string{"connection refused", "connection reset"}
-		for _, s := range retryable {
-			if strings.Contains(e.Error(), s) {
-				return true
-			}
-		}
-	case interface{ Timeout() bool }:
-		if e.Timeout() {
-			return true
-		}
-	case interface{ Temporary() bool }:
-		if e.Temporary() {
-			return true
-		}
-	}
-	// Check wrapped error.
-	return isRetryableTablesListError(errors.Unwrap(err))
 }
 
 // oauthErrorResponse is the OAuth 2.0 error body an IdP returns on a

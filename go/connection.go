@@ -42,7 +42,6 @@ import (
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
-	gax "github.com/googleapis/gax-go/v2"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google/externalaccount"
 	bqv2 "google.golang.org/api/bigquery/v2"
@@ -337,7 +336,7 @@ func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog 
 			PageToken(pageToken).
 			Fields("nextPageToken", "tables(tableReference(tableId),type)").
 			Context(ctx)
-		page, err := doWithRetry(ctx, call.Do)
+		page, err := doWithRetry(ctx, call.Do, defaultRetryReasons)
 		if err != nil {
 			return nil, err
 		}
@@ -355,49 +354,6 @@ func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog 
 		}
 		pageToken = page.NextPageToken
 	}
-}
-
-// tablesListBackoff is the backoff bigquery.Client uses for its tables.list
-// calls (runWithRetryExplicit, which follows https://cloud.google.com/bigquery/sla):
-// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/bigquery.go#L238-L252
-var tablesListBackoff = gax.Backoff{
-	Initial:    1 * time.Second,
-	Max:        32 * time.Second,
-	Multiplier: 2,
-}
-
-// doWithRetry runs a REST call with the retries bigquery.Client applies to its
-// own tables.list calls (listTables wraps call.Do in runWithRetry), since a
-// generated call's Do sends the request exactly once
-// (gensupport.SendRequest, no retry loop). Errors are classified by
-// isRetryableError with tablesListRetryReasons (util.go):
-// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/dataset.go#L658-L675
-// https://github.com/googleapis/google-api-go-client/blob/v0.287.1/internal/gensupport/send.go#L85-L97
-//
-// Like runWithRetry there is no attempt limit; retries stop when the error is
-// not retryable or ctx is done.
-func doWithRetry[T any](ctx context.Context, do func(...googleapi.CallOption) (T, error)) (T, error) {
-	var res T
-	var lastErr error
-	err := gax.Invoke(ctx, func(context.Context, gax.CallSettings) error {
-		res, lastErr = do()
-		return lastErr
-	}, gax.WithRetry(func() gax.Retryer {
-		return gax.OnErrorFunc(tablesListBackoff, func(err error) bool {
-			return isRetryableError(err, tablesListRetryReasons)
-		})
-	}))
-	if err != nil && lastErr != nil && !errors.Is(err, lastErr) {
-		// ctx was done while waiting to retry. Keep the API error as well, like
-		// cloud.google.com/go/internal.Retry does:
-		// https://github.com/googleapis/google-cloud-go/blob/v0.123.0/internal/retry.go#L35-L55
-		return res, errors.Join(err, lastErr)
-	}
-	// gax.Invoke wraps API errors in apierror.APIError, whose message drops the
-	// googleapi.Error reasons (e.g. accessDenied) that callers match on. Return
-	// the original error instead:
-	// https://github.com/googleapis/gax-go/blob/v2.23.0/v2/invoke.go#L121-L123
-	return res, lastErr
 }
 
 // oauthErrorResponse is the OAuth 2.0 error body an IdP returns on a

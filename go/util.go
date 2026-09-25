@@ -114,10 +114,10 @@ var (
 	// it would otherwise be polled forever (see safeWaitForJob).
 	jobStatusRetryReasons = []string{"backendError", "internalError"}
 
-	// tablesListRetryReasons are the reasons bigquery.Client retries for
-	// tables.list (defaultRetryReasons). A tables.list request has no job
+	// defaultRetryReasons are the reasons bigquery.Client retries for its
+	// non-job API calls, such as tables.list:
 	// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/bigquery.go#L254-L255
-	tablesListRetryReasons = []string{"backendError", "rateLimitExceeded"}
+	defaultRetryReasons = []string{"backendError", "rateLimitExceeded"}
 )
 
 // isRetryableError reports whether err is transient, retrying structured
@@ -163,6 +163,39 @@ func isRetryableError(err error, retryableReasons []string) bool {
 	}
 
 	return isRetryableError(errors.Unwrap(err), retryableReasons)
+}
+
+// clientBackoff is the backoff bigquery.Client uses when retrying API calls:
+// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/bigquery.go#L238-L252
+var clientBackoff = gax.Backoff{
+	Initial:    1 * time.Second,
+	Max:        32 * time.Second,
+	Multiplier: 2,
+}
+
+// doWithRetry calls a generated REST API call
+// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/dataset.go#L658-L675
+// https://github.com/googleapis/google-api-go-client/blob/v0.287.1/internal/gensupport/send.go#L85-L97
+func doWithRetry[T any](ctx context.Context, do func(...googleapi.CallOption) (T, error), retryableReasons []string) (T, error) {
+	var res T
+	var lastErr error // lastErr is the raw error returned from the last call being retried
+	err := gax.Invoke(ctx, func(context.Context, gax.CallSettings) error {
+		res, lastErr = do()
+		return lastErr
+	}, gax.WithRetry(func() gax.Retryer {
+		return gax.OnErrorFunc(clientBackoff, func(err error) bool {
+			return isRetryableError(err, retryableReasons)
+		})
+	}))
+
+	// err returned from gax.Invoke could be either a context end error (context.Canceled / DeadlineExceeded)
+	// or a wrapped error if the lastErr is not retried
+	// https://github.com/googleapis/google-cloud-go/blob/v0.123.0/internal/retry.go#L35-L55
+	// https://github.com/googleapis/gax-go/blob/v2.23.0/v2/invoke.go#L121-L123
+	if err != nil && lastErr != nil && !errors.Is(err, lastErr) {
+		return res, errors.Join(err, lastErr)
+	}
+	return res, lastErr
 }
 
 // errToAdbcErr converts an error to an ADBC error, using the metadata from

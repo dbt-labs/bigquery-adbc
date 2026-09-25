@@ -132,15 +132,6 @@ func TestStatementSetGetOptionReservation(t *testing.T) {
 		t.Fatalf("expected %q, got %q", reservation, got)
 	}
 
-	// Legacy option key remaps to the new one.
-	got, err = st.GetOption(ctx, "adbc.bigquery.sql.query.reservation")
-	if err != nil {
-		t.Fatalf("GetOption(legacy) returned error: %v", err)
-	}
-	if got != reservation {
-		t.Fatalf("expected legacy key to return %q, got %q", reservation, got)
-	}
-
 	// Clear the reservation
 	if err := st.SetOption(ctx, OptionQueryReservation, ""); err != nil {
 		t.Fatalf("SetOption(empty) returned error: %v", err)

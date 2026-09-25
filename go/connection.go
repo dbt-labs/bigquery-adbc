@@ -310,17 +310,9 @@ const tablesListPageSize = 1000
 // listTablesWithoutMetadata returns the tables from the catalog.schema with only
 // the table names and table types, the rest of the metadata is returned empty
 //
-// It calls tables.list through the REST service instead of iterating
-// bigquery.Client's DatasetInProject(...).Tables(ctx), because that iterator
-// does not return the table type, which GetObjects requires (table_type is
-// non-nullable). The tables.list response carries each table's type, but the
-// iterator converts every entry with bqToTable, which keeps only the project,
-// dataset and table IDs; bigquery.Table has no field for the type at all. The
-// only way to get the type through the iterator is a tables.get per table
-// (Table.Metadata), which is the per-table call this path exists to avoid.
-// See TableIterator.fetch and bqToTable:
+// Uses tables.list from the REST API directly because bigquery.Client's Tables iterator omits table type info.
+// The iterator returned from client.DatasetInProject(catalog, schema).Tables(ctx) only provides table/project/dataset IDs
 // https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/dataset.go#L677-L698
-// and the Table struct:
 // https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/table.go#L29-L39
 func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog string, schema string, tablePattern *regexp.Regexp) ([]driverbase.TableInfo, error) {
 	svc, err := c.getOrCreateTablesService(ctx)

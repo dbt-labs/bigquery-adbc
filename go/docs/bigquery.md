@@ -177,6 +177,11 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   Override the location of the API endpoint for BigQuery; this can be used to connect to an emulator instead. It should be `http://host:port`.
 
+`bigquery.get_objects.skip_table_metadata`
+: **Type:** boolean. **Default:** false
+
+  When enabled, `GetObjects` at depth `tables` lists tables using `tables.list` alone, instead of also fetching each table's metadata with `tables.get`. This avoids one API call per table. `table_type` comes from the list response, and `table_constraints` is always null. Depths that include columns are unaffected.
+
 `bigquery.impersonate.delegates`
 : **Type:** string (comma-separated list). **Default:** (empty) **URI Parameter:** `ImpersonateDelegates`
 

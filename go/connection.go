@@ -44,6 +44,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google/externalaccount"
+	bqv2 "google.golang.org/api/bigquery/v2"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
@@ -96,6 +97,8 @@ type connectionImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
+	getObjectsSkipTableMetadata bool
+
 	client *bigquery.Client
 	// clientStorageApiDisabled is a parallel client that does NOT have the
 	// Storage Read API enabled. Used when a statement requests
@@ -103,6 +106,11 @@ type connectionImpl struct {
 	// nulls for pseudo-columns like _PARTITIONDATE/_PARTITIONTIME.
 	// Initialized lazily on first use.
 	clientStorageApiDisabled *bigquery.Client
+	// tablesService is a REST client used to call tables.list directly:
+	// bigquery.Client's table iterator does not return the table type, which
+	// GetObjects needs (see listTablesWithoutMetadata). Initialized lazily on
+	// first use.
+	tablesService *bqv2.Service
 }
 
 func (c *connectionImpl) GetCatalogs(ctx context.Context, catalogFilter *string) ([]string, error) {
@@ -162,6 +170,10 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 	}
 	if tablePattern == nil {
 		tablePattern = driverbase.AcceptAll
+	}
+
+	if !includeColumns && c.getObjectsSkipTableMetadata {
+		return c.listTablesWithoutMetadata(ctx, catalog, schema, tablePattern)
 	}
 
 	it := c.client.DatasetInProject(catalog, schema).Tables(ctx)
@@ -291,6 +303,49 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 	}
 
 	return res, nil
+}
+
+const tablesListPageSize = 1000
+
+// listTablesWithoutMetadata returns the tables from the catalog.schema with only
+// the table names and table types, the rest of the metadata is returned empty
+//
+// Uses tables.list from the REST API directly because bigquery.Client's Tables iterator omits table type info.
+// The iterator returned from client.DatasetInProject(catalog, schema).Tables(ctx) only provides table/project/dataset IDs
+// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/dataset.go#L677-L698
+// https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/table.go#L29-L39
+func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog string, schema string, tablePattern *regexp.Regexp) ([]driverbase.TableInfo, error) {
+	svc, err := c.getOrCreateTablesService(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]driverbase.TableInfo, 0)
+	pageToken := ""
+	for {
+		call := svc.Tables.List(catalog, schema).
+			MaxResults(tablesListPageSize).
+			PageToken(pageToken).
+			Fields("nextPageToken", "tables(tableReference(tableId),type)").
+			Context(ctx)
+		page, err := doWithRetry(ctx, call.Do, defaultRetryReasons)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range page.Tables {
+			if t.TableReference == nil || !tablePattern.MatchString(t.TableReference.TableId) {
+				continue
+			}
+			res = append(res, driverbase.TableInfo{
+				TableName: t.TableReference.TableId,
+				TableType: t.Type,
+			})
+		}
+		if page.NextPageToken == "" {
+			return res, nil
+		}
+		pageToken = page.NextPageToken
+	}
 }
 
 // oauthErrorResponse is the OAuth 2.0 error body an IdP returns on a
@@ -749,6 +804,11 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 			return OptionValueCompressionNone, nil
 		}
 		return c.bulkIngestCompression, nil
+	case OptionGetObjectsSkipTableMetadata:
+		if c.getObjectsSkipTableMetadata {
+			return adbc.OptionValueEnabled, nil
+		}
+		return adbc.OptionValueDisabled, nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -841,6 +901,18 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 			}
 		}
 		c.bulkIngestCompression = value
+	case OptionGetObjectsSkipTableMetadata:
+		switch value {
+		case adbc.OptionValueEnabled:
+			c.getObjectsSkipTableMetadata = true
+		case adbc.OptionValueDisabled:
+			c.getObjectsSkipTableMetadata = false
+		default:
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid %s value: %q (expected %q or %q)", key, value, adbc.OptionValueEnabled, adbc.OptionValueDisabled),
+			}
+		}
 	default:
 		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
@@ -1141,6 +1213,27 @@ func (c *connectionImpl) getOrCreateStorageApiDisabledClient(ctx context.Context
 	}
 	c.clientStorageApiDisabled = client
 	return client, nil
+}
+
+// getOrCreateTablesService lazily constructs (and caches) a REST BigQuery
+// service with the same credentials and endpoint as the connection's client.
+func (c *connectionImpl) getOrCreateTablesService(ctx context.Context) (*bqv2.Service, error) {
+	if c.tablesService != nil {
+		return c.tablesService, nil
+	}
+	authOptions, err := c.authOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c.endpoint != "" {
+		authOptions = append(authOptions, withBigQueryRESTEndpoint(c.endpoint))
+	}
+	svc, err := bqv2.NewService(ctx, authOptions...)
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusIO, err, "create tables service")
+	}
+	c.tablesService = svc
+	return svc, nil
 }
 
 func (c *connectionImpl) hasImpersonationOptions() bool {

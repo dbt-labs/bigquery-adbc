@@ -261,6 +261,13 @@ const (
 	OptionValueCompressionNone  = "none"
 	OptionValueCompressionLZ4   = "lz4"
 	OptionValueCompressionZSTD  = "zstd"
+
+	// OptionGetObjectsSkipTableMetadata, when true, makes GetObjects at
+	// ObjectDepthTables enumerate tables with tables.list alone instead of
+	// issuing an additional tables.get per table. table_type is taken from the
+	// list response and table_constraints is left null. Depths that include
+	// columns are unaffected. Default is false.
+	OptionGetObjectsSkipTableMetadata = "bigquery.get_objects.skip_table_metadata"
 )
 
 var (

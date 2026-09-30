@@ -257,3 +257,25 @@ func TestRunQueryRecoversExistingJobAfterDuplicateInsert(t *testing.T) {
 		t.Fatalf("expected two distinct submitted job IDs, got %d", len(submittedJobIDs))
 	}
 }
+
+type failingArrowIterator struct{}
+
+func (failingArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
+	return nil, fmt.Errorf("stream failed")
+}
+
+func (failingArrowIterator) Schema() bigquery.Schema {
+	return bigquery.Schema{{Name: "col", Type: bigquery.StringFieldType}}
+}
+
+func (failingArrowIterator) SerializedArrowSchema() []byte {
+	return nil
+}
+
+func TestIpcReaderFromArrowIteratorPropagatesReaderError(t *testing.T) {
+	rdr, schema, err := ipcReaderFromArrowIterator(failingArrowIterator{}, &bigquery.JobStatistics{}, "job", memory.DefaultAllocator)
+
+	require.Error(t, err)
+	require.Nil(t, rdr)
+	require.Nil(t, schema)
+}

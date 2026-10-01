@@ -79,9 +79,32 @@ func (st *statement) executeCopyTable(ctx context.Context) (array.RecordReader, 
 	return emptyResult()
 }
 
+func applyColumnMetadata(schema bigquery.Schema, prefix string, descriptions map[string]string, policyTags map[string][]string) bigquery.Schema {
+	newSchema := make(bigquery.Schema, len(schema))
+	for i, field := range schema {
+		path := field.Name
+		if prefix != "" {
+			path = prefix + "." + field.Name
+		}
+		nf := *field
+		if d, ok := descriptions[path]; ok {
+			nf.Description = d
+		}
+		if tags, ok := policyTags[path]; ok && field.Type != bigquery.RecordFieldType {
+			nf.PolicyTags = &bigquery.PolicyTagList{Names: tags}
+		}
+		if len(field.Schema) > 0 {
+			nf.Schema = applyColumnMetadata(field.Schema, path, descriptions, policyTags)
+		}
+		newSchema[i] = &nf
+	}
+	return newSchema
+}
+
 // executeUpdateTableColumnsMetadata updates column-level descriptions
 // on the table referenced by queryConfig.Dst. The input is a JSON object
-// {column: string}. Columns not present in the map are left untouched.
+// {column: string}, where the key is a dot-separated path addressing
+// nested fields as `a.b.c`. Columns not present in the map are left untouched.
 func (st *statement) executeUpdateTableColumnsMetadata(ctx context.Context) (array.RecordReader, int64, error) {
 	if st.queryConfig.Dst == nil {
 		return nil, -1, adbc.Error{
@@ -115,25 +138,7 @@ func (st *statement) executeUpdateTableColumnsMetadata(ctx context.Context) (arr
 		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "get table metadata")
 	}
 
-	newSchema := make([]*bigquery.FieldSchema, len(md.Schema))
-	for i, field := range md.Schema {
-		nf := &bigquery.FieldSchema{
-			Name:        field.Name,
-			Type:        field.Type,
-			Description: field.Description,
-			Repeated:    field.Repeated,
-			Required:    field.Required,
-			Schema:      field.Schema,
-			PolicyTags:  field.PolicyTags,
-		}
-		if d, ok := columnDescriptions[field.Name]; ok {
-			nf.Description = d
-		}
-		if tags, ok := columnPolicyTags[field.Name]; ok && field.Type != bigquery.RecordFieldType {
-			nf.PolicyTags = &bigquery.PolicyTagList{Names: tags}
-		}
-		newSchema[i] = nf
-	}
+	newSchema := applyColumnMetadata(md.Schema, "", columnDescriptions, columnPolicyTags)
 
 	// For compatibility with dbt-core, perform a blind write when updating the table.
 	// dbt-core uses Client.update_table on a new_table instance,

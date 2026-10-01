@@ -209,21 +209,22 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatistics *bigquery.JobStatistics, jobID string, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
 	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
+	if err != nil {
+		return nil, nil, errToAdbcErr(adbc.StatusInternal, err, "read arrow stream")
+	}
 
 	fields := make([]arrow.Field, len(arrowIterator.Schema()))
 	for i, field := range arrowIterator.Schema() {
 		fields[i], err = buildField(field, 0)
 		if err != nil {
+			rdr.Release()
 			return nil, nil, err
 		}
 	}
 
-	if err != nil {
-		return nil, nil, err
-	}
-
 	metadata, err := metadataFromJobStatistics(jobStatistics, jobID)
 	if err != nil {
+		rdr.Release()
 		return nil, nil, err
 	}
 	return rdr, arrow.NewSchema(fields, metadata), nil

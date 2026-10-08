@@ -98,6 +98,7 @@ type connectionImpl struct {
 	bulkIngestCompression string
 
 	getObjectsSkipTableMetadata bool
+	getObjectsDisableWildcards  bool
 
 	client *bigquery.Client
 	// clientStorageApiDisabled is a parallel client that does NOT have the
@@ -114,19 +115,16 @@ type connectionImpl struct {
 }
 
 func (c *connectionImpl) GetCatalogs(ctx context.Context, catalogFilter *string) ([]string, error) {
-	catalogPattern, err := driverbase.PatternToRegexp(catalogFilter)
+	matchCatalog, err := c.getObjectsFilter(catalogFilter)
 	if err != nil {
 		return nil, err
-	}
-	if catalogPattern == nil {
-		catalogPattern = driverbase.AcceptAll
 	}
 
 	// Connections to BQ are scoped to a particular Project, which corresponds to catalog-level namespacing.
 	// TODO: Consider enumerating projects with ResourceManager API, but this may not be "idiomatic" usage.
 	project := c.client.Project()
 	res := make([]string, 0)
-	if catalogPattern.MatchString(project) {
+	if matchCatalog(project) {
 		res = append(res, project)
 	}
 
@@ -134,12 +132,13 @@ func (c *connectionImpl) GetCatalogs(ctx context.Context, catalogFilter *string)
 }
 
 func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog string, schemaFilter *string) ([]string, error) {
-	schemaPattern, err := driverbase.PatternToRegexp(schemaFilter)
+	if c.getObjectsDisableWildcards && schemaFilter != nil {
+		return c.getExactDBSchema(ctx, catalog, *schemaFilter)
+	}
+
+	matchSchema, err := c.getObjectsFilter(schemaFilter)
 	if err != nil {
 		return nil, err
-	}
-	if schemaPattern == nil {
-		schemaPattern = driverbase.AcceptAll
 	}
 
 	it := c.client.Datasets(ctx)
@@ -156,7 +155,7 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 		if err != nil {
 			return nil, err
 		}
-		if schemaPattern.MatchString(ds.DatasetID) {
+		if matchSchema(ds.DatasetID) {
 			res = append(res, ds.DatasetID)
 		}
 	}
@@ -166,17 +165,39 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 
 const datasetsListPageSize = 1000
 
-func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog string, schema string, tableFilter *string, columnFilter *string, includeColumns bool) ([]driverbase.TableInfo, error) {
-	tablePattern, err := driverbase.PatternToRegexp(tableFilter)
+func (c *connectionImpl) getExactDBSchema(ctx context.Context, catalog string, schema string) ([]string, error) {
+	if _, err := c.client.DatasetInProject(catalog, schema).Metadata(ctx); err != nil {
+		if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
+			return []string{}, nil
+		}
+		return nil, errToAdbcErr(adbc.StatusIO, err, "get dataset %s.%s", catalog, schema)
+	}
+	return []string{schema}, nil
+}
+
+func (c *connectionImpl) getObjectsFilter(filter *string) (func(string) bool, error) {
+	if filter == nil {
+		return func(string) bool { return true }, nil
+	}
+	if c.getObjectsDisableWildcards {
+		name := *filter
+		return func(s string) bool { return s == name }, nil
+	}
+	pattern, err := driverbase.PatternToRegexp(filter)
 	if err != nil {
 		return nil, err
 	}
-	if tablePattern == nil {
-		tablePattern = driverbase.AcceptAll
+	return pattern.MatchString, nil
+}
+
+func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog string, schema string, tableFilter *string, columnFilter *string, includeColumns bool) ([]driverbase.TableInfo, error) {
+	matchTable, err := c.getObjectsFilter(tableFilter)
+	if err != nil {
+		return nil, err
 	}
 
 	if !includeColumns && c.getObjectsSkipTableMetadata {
-		return c.listTablesWithoutMetadata(ctx, catalog, schema, tablePattern)
+		return c.listTablesWithoutMetadata(ctx, catalog, schema, matchTable)
 	}
 
 	it := c.client.DatasetInProject(catalog, schema).Tables(ctx)
@@ -190,7 +211,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 		if err != nil {
 			return nil, err
 		}
-		if !tablePattern.MatchString(table.TableID) {
+		if !matchTable(table.TableID) {
 			continue
 		}
 
@@ -243,17 +264,14 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 		var columns []driverbase.ColumnInfo
 		if includeColumns {
-			columnPattern, err := driverbase.PatternToRegexp(columnFilter)
+			matchColumn, err := c.getObjectsFilter(columnFilter)
 			if err != nil {
 				return nil, err
-			}
-			if columnPattern == nil {
-				columnPattern = driverbase.AcceptAll
 			}
 
 			columns = make([]driverbase.ColumnInfo, 0)
 			for pos, fieldschema := range md.Schema {
-				if columnPattern.MatchString(fieldschema.Name) {
+				if matchColumn(fieldschema.Name) {
 					xdbcIsNullable := "YES"
 					xdbcNullable := int16(1)
 					if fieldschema.Required {
@@ -317,7 +335,7 @@ const tablesListPageSize = 1000
 // The iterator returned from client.DatasetInProject(catalog, schema).Tables(ctx) only provides table/project/dataset IDs
 // https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/dataset.go#L677-L698
 // https://github.com/googleapis/google-cloud-go/blob/bigquery/v1.85.0/bigquery/table.go#L29-L39
-func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog string, schema string, tablePattern *regexp.Regexp) ([]driverbase.TableInfo, error) {
+func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog string, schema string, matchTable func(string) bool) ([]driverbase.TableInfo, error) {
 	svc, err := c.getOrCreateTablesService(ctx)
 	if err != nil {
 		return nil, err
@@ -336,7 +354,7 @@ func (c *connectionImpl) listTablesWithoutMetadata(ctx context.Context, catalog 
 			return nil, err
 		}
 		for _, t := range page.Tables {
-			if t.TableReference == nil || !tablePattern.MatchString(t.TableReference.TableId) {
+			if t.TableReference == nil || !matchTable(t.TableReference.TableId) {
 				continue
 			}
 			res = append(res, driverbase.TableInfo{
@@ -812,6 +830,11 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 			return adbc.OptionValueEnabled, nil
 		}
 		return adbc.OptionValueDisabled, nil
+	case OptionGetObjectsDisableWildcards:
+		if c.getObjectsDisableWildcards {
+			return adbc.OptionValueEnabled, nil
+		}
+		return adbc.OptionValueDisabled, nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -910,6 +933,18 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 			c.getObjectsSkipTableMetadata = true
 		case adbc.OptionValueDisabled:
 			c.getObjectsSkipTableMetadata = false
+		default:
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid %s value: %q (expected %q or %q)", key, value, adbc.OptionValueEnabled, adbc.OptionValueDisabled),
+			}
+		}
+	case OptionGetObjectsDisableWildcards:
+		switch value {
+		case adbc.OptionValueEnabled:
+			c.getObjectsDisableWildcards = true
+		case adbc.OptionValueDisabled:
+			c.getObjectsDisableWildcards = false
 		default:
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,

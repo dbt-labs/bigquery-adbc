@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -306,5 +309,211 @@ func TestDoWithRetryKeepsAPIErrorWhenContextDone(t *testing.T) {
 	}
 	if !errors.Is(err, apiErr) {
 		t.Fatalf("expected the last API error to be kept, got %v", err)
+	}
+}
+
+type fakeDatasetsAPI struct {
+	datasets   []string
+	pageSize   int
+	listCalls  atomic.Int32
+	getCalls   atomic.Int32
+	maxResults atomic.Value
+	getStatus  int
+}
+
+func (f *fakeDatasetsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const prefix = "/bigquery/v2/projects/p/datasets"
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.URL.Path == prefix:
+		f.listCalls.Add(1)
+		f.maxResults.Store(r.URL.Query().Get("maxResults"))
+		start := 0
+		if tok := r.URL.Query().Get("pageToken"); tok != "" {
+			start, _ = strconv.Atoi(tok)
+		}
+		end := min(start+f.pageSize, len(f.datasets))
+		datasets := make([]map[string]any, 0)
+		for _, id := range f.datasets[start:end] {
+			datasets = append(datasets, map[string]any{
+				"datasetReference": map[string]string{"projectId": "p", "datasetId": id},
+			})
+		}
+		resp := map[string]any{"datasets": datasets}
+		if end < len(f.datasets) {
+			resp["nextPageToken"] = strconv.Itoa(end)
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	case strings.HasPrefix(r.URL.Path, prefix+"/"):
+		f.getCalls.Add(1)
+		id := strings.TrimPrefix(r.URL.Path, prefix+"/")
+		status := f.getStatus
+		if status == 0 && !slices.Contains(f.datasets, id) {
+			status = http.StatusNotFound
+		}
+		if status != 0 {
+			w.WriteHeader(status)
+			_, _ = fmt.Fprintf(w, `{"error":{"code":%d,"message":"fake error for %s"}}`, status, id)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"datasetReference": map[string]string{"projectId": "p", "datasetId": id},
+		})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func newFakeDatasetsConnection(t *testing.T, disableWildcards bool) (*connectionImpl, *fakeDatasetsAPI) {
+	t.Helper()
+	api := &fakeDatasetsAPI{
+		datasets: []string{"a_b", "axb", "A_B", "other", "a_b_c"},
+		pageSize: 2,
+	}
+	srv := httptest.NewServer(api)
+	t.Cleanup(srv.Close)
+
+	client, err := bigquery.NewClient(context.Background(), "p",
+		withBigQueryRESTEndpoint(srv.URL+"/"),
+		option.WithHTTPClient(srv.Client()),
+		option.WithoutAuthentication(),
+	)
+	if err != nil {
+		t.Fatalf("bigquery.NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return &connectionImpl{
+		client:                     client,
+		getObjectsDisableWildcards: disableWildcards,
+	}, api
+}
+
+func TestGetDBSchemasForCatalogListsWithLargePages(t *testing.T) {
+	conn, api := newFakeDatasetsConnection(t, false)
+	filter := "a_b"
+	got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &filter)
+	if err != nil {
+		t.Fatalf("GetDBSchemasForCatalog: %v", err)
+	}
+	if want := []string{"a_b", "axb", "A_B"}; !slices.Equal(got, want) {
+		t.Fatalf("expected pattern matches %v, got %v", want, got)
+	}
+	if n := api.getCalls.Load(); n != 0 {
+		t.Fatalf("expected no datasets.get calls, got %d", n)
+	}
+	if n := api.listCalls.Load(); n != 3 {
+		t.Fatalf("expected 3 datasets.list pages, got %d", n)
+	}
+	if got := api.maxResults.Load(); got != strconv.Itoa(datasetsListPageSize) {
+		t.Fatalf("expected maxResults=%d, got %v", datasetsListPageSize, got)
+	}
+}
+
+func TestGetDBSchemasForCatalogDisableWildcards(t *testing.T) {
+	for _, tc := range []struct {
+		filter string
+		want   []string
+	}{
+		{"a_b", []string{"a_b"}},
+		{"A_B", []string{"A_B"}},
+		{"a_b%", []string{}},
+		{"missing", []string{}},
+	} {
+		conn, api := newFakeDatasetsConnection(t, true)
+		got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &tc.filter)
+		if err != nil {
+			t.Fatalf("%s: GetDBSchemasForCatalog: %v", tc.filter, err)
+		}
+		if got == nil || !slices.Equal(got, tc.want) {
+			t.Fatalf("%s: expected %v, got %#v", tc.filter, tc.want, got)
+		}
+		if n := api.listCalls.Load(); n != 0 {
+			t.Fatalf("%s: expected no datasets.list calls, got %d", tc.filter, n)
+		}
+		if n := api.getCalls.Load(); n != 1 {
+			t.Fatalf("%s: expected 1 datasets.get call, got %d", tc.filter, n)
+		}
+	}
+}
+
+func TestGetDBSchemasForCatalogDisableWildcardsNilFilterLists(t *testing.T) {
+	conn, api := newFakeDatasetsConnection(t, true)
+	got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", nil)
+	if err != nil {
+		t.Fatalf("GetDBSchemasForCatalog: %v", err)
+	}
+	if !slices.Equal(got, api.datasets) || api.getCalls.Load() != 0 {
+		t.Fatalf("expected all datasets via list, got %v (%d gets)", got, api.getCalls.Load())
+	}
+}
+
+func TestGetDBSchemasForCatalogDisableWildcardsErrors(t *testing.T) {
+	filter := "a_b"
+
+	conn, api := newFakeDatasetsConnection(t, true)
+	api.getStatus = http.StatusForbidden
+	got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &filter)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("forbidden: expected empty result, got %#v (%v)", got, err)
+	}
+
+	conn, api = newFakeDatasetsConnection(t, true)
+	api.getStatus = http.StatusBadRequest
+	if _, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &filter); err == nil {
+		t.Fatalf("bad request: expected an error")
+	}
+}
+
+func TestGetTablesForDBSchemaDisableWildcards(t *testing.T) {
+	for _, skipTableMetadata := range []bool{false, true} {
+		for filter, want := range map[string][]string{
+			"orders":   {"orders"},
+			"ORDERS":   {},
+			"orders%":  {},
+			"orders_v": {"orders_v"},
+		} {
+			conn, _ := newFakeTablesConnection(t, skipTableMetadata)
+			conn.getObjectsDisableWildcards = true
+			got, err := conn.GetTablesForDBSchema(context.Background(), "p", "d", &filter, nil, false)
+			if err != nil {
+				t.Fatalf("%s (skip=%v): GetTablesForDBSchema: %v", filter, skipTableMetadata, err)
+			}
+			names := make([]string, 0, len(got))
+			for _, info := range got {
+				names = append(names, info.TableName)
+			}
+			if !slices.Equal(names, want) {
+				t.Fatalf("%s (skip=%v): expected %v, got %v", filter, skipTableMetadata, want, names)
+			}
+		}
+	}
+}
+
+func TestGetCatalogsDisableWildcards(t *testing.T) {
+	conn, _ := newFakeDatasetsConnection(t, true)
+	for filter, want := range map[string][]string{"p": {"p"}, "_": {}, "%": {}, "P": {}} {
+		got, err := conn.GetCatalogs(context.Background(), &filter)
+		if err != nil || !slices.Equal(got, want) {
+			t.Fatalf("%s: expected %v, got %v (%v)", filter, want, got, err)
+		}
+	}
+}
+
+func TestGetObjectsDisableWildcardsOption(t *testing.T) {
+	ctx := context.Background()
+	cnxn := &connectionImpl{}
+	if got, err := cnxn.GetOption(ctx, OptionGetObjectsDisableWildcards); err != nil || got != "false" {
+		t.Fatalf("expected default false, got %q (%v)", got, err)
+	}
+	if err := cnxn.SetOption(ctx, OptionGetObjectsDisableWildcards, "true"); err != nil {
+		t.Fatalf("SetOption: %v", err)
+	}
+	if got, err := cnxn.GetOption(ctx, OptionGetObjectsDisableWildcards); err != nil || got != "true" {
+		t.Fatalf("expected true, got %q (%v)", got, err)
+	}
+	for _, v := range []string{"maybe", "1", "TRUE"} {
+		if err := cnxn.SetOption(ctx, OptionGetObjectsDisableWildcards, v); err == nil {
+			t.Fatalf("expected error for %q", v)
+		}
 	}
 }

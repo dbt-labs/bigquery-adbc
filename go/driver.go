@@ -268,6 +268,11 @@ const (
 	// list response and table_constraints is left null. Depths that include
 	// columns are unaffected. Default is false.
 	OptionGetObjectsSkipTableMetadata = "bigquery.get_objects.skip_table_metadata"
+
+	// OptionGetObjectsDisableWildcards, when true, makes GetObjects perform 
+	// an exact match lookup against the provided filters instead of trying to use
+	// regex wildcards.
+	OptionGetObjectsDisableWildcards = "bigquery.get_objects.disable_wildcards"
 )
 
 var (

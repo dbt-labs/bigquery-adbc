@@ -145,6 +145,7 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 	it := c.client.Datasets(ctx)
 	it.ProjectID = catalog
 	it.ListHidden = true
+	it.PageInfo().MaxSize = datasetsListPageSize
 
 	res := make([]string, 0)
 	for {
@@ -162,6 +163,8 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 
 	return res, nil
 }
+
+const datasetsListPageSize = 1000
 
 func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog string, schema string, tableFilter *string, columnFilter *string, includeColumns bool) ([]driverbase.TableInfo, error) {
 	tablePattern, err := driverbase.PatternToRegexp(tableFilter)

@@ -132,6 +132,11 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
 ### Connection Options
 
+`bigquery.get_objects.disable_wildcards`
+: **Type:** boolean. **Default:** false
+
+  When enabled, `GetObjects` matches the catalog, schema, table and column filters by exact, case-sensitive name instead of as search patterns. `_` and `%` match only themselves. When the caller passes a schema filter, the driver fetches that one dataset with `datasets.get` instead of listing every dataset in the project.
+
 `bigquery.auth_type`
 : **Values:** `auth_bigquery`, `json_credential_file`, `json_credential_string`, `anonymous`, `user_authentication`, `app_default_credentials`, `json_credentials`, `oauth_client_ids`. **Default:** `auth_bigquery`. **URI Parameter:** `OAuthType`
 

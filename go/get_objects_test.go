@@ -31,6 +31,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
+	"github.com/apache/arrow-adbc/go/adbc"
 	gax "github.com/googleapis/gax-go/v2"
 	bqv2 "google.golang.org/api/bigquery/v2"
 	"google.golang.org/api/googleapi"
@@ -410,28 +411,20 @@ func TestGetDBSchemasForCatalogListsWithLargePages(t *testing.T) {
 }
 
 func TestGetDBSchemasForCatalogDisableWildcards(t *testing.T) {
-	for _, tc := range []struct {
-		filter string
-		want   []string
-	}{
-		{"a_b", []string{"a_b"}},
-		{"A_B", []string{"A_B"}},
-		{"a_b%", []string{}},
-		{"missing", []string{}},
-	} {
+	for _, filter := range []string{"a_b", "A_B"} {
 		conn, api := newFakeDatasetsConnection(t, true)
-		got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &tc.filter)
+		got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &filter)
 		if err != nil {
-			t.Fatalf("%s: GetDBSchemasForCatalog: %v", tc.filter, err)
+			t.Fatalf("%s: GetDBSchemasForCatalog: %v", filter, err)
 		}
-		if got == nil || !slices.Equal(got, tc.want) {
-			t.Fatalf("%s: expected %v, got %#v", tc.filter, tc.want, got)
+		if want := []string{filter}; !slices.Equal(got, want) {
+			t.Fatalf("%s: expected %v, got %#v", filter, want, got)
 		}
 		if n := api.listCalls.Load(); n != 0 {
-			t.Fatalf("%s: expected no datasets.list calls, got %d", tc.filter, n)
+			t.Fatalf("%s: expected no datasets.list calls, got %d", filter, n)
 		}
 		if n := api.getCalls.Load(); n != 1 {
-			t.Fatalf("%s: expected 1 datasets.get call, got %d", tc.filter, n)
+			t.Fatalf("%s: expected 1 datasets.get call, got %d", filter, n)
 		}
 	}
 }
@@ -448,19 +441,26 @@ func TestGetDBSchemasForCatalogDisableWildcardsNilFilterLists(t *testing.T) {
 }
 
 func TestGetDBSchemasForCatalogDisableWildcardsErrors(t *testing.T) {
-	filter := "a_b"
-
-	conn, api := newFakeDatasetsConnection(t, true)
-	api.getStatus = http.StatusForbidden
-	got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &filter)
-	if err != nil || got == nil || len(got) != 0 {
-		t.Fatalf("forbidden: expected empty result, got %#v (%v)", got, err)
-	}
-
-	conn, api = newFakeDatasetsConnection(t, true)
-	api.getStatus = http.StatusBadRequest
-	if _, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &filter); err == nil {
-		t.Fatalf("bad request: expected an error")
+	for _, tc := range []struct {
+		filter    string
+		getStatus int
+		want      adbc.Status
+	}{
+		{"missing", 0, adbc.StatusNotFound},
+		{"a_b%", 0, adbc.StatusNotFound},
+		{"a_b", http.StatusForbidden, adbc.StatusIO},
+		{"a_b", http.StatusBadRequest, adbc.StatusInvalidArgument},
+	} {
+		conn, api := newFakeDatasetsConnection(t, true)
+		api.getStatus = tc.getStatus
+		got, err := conn.GetDBSchemasForCatalog(context.Background(), "p", &tc.filter)
+		var adbcErr adbc.Error
+		if !errors.As(err, &adbcErr) || adbcErr.Code != tc.want {
+			t.Fatalf("%s (%d): expected status %v, got %#v (%v)", tc.filter, tc.getStatus, tc.want, got, err)
+		}
+		if n := api.listCalls.Load(); n != 0 {
+			t.Fatalf("%s (%d): expected no datasets.list calls, got %d", tc.filter, tc.getStatus, n)
+		}
 	}
 }
 

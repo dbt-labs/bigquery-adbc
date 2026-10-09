@@ -167,9 +167,6 @@ const datasetsListPageSize = 1000
 
 func (c *connectionImpl) getExactDBSchema(ctx context.Context, catalog string, schema string) ([]string, error) {
 	if _, err := c.client.DatasetInProject(catalog, schema).Metadata(ctx); err != nil {
-		if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
-			return []string{}, nil
-		}
 		return nil, errToAdbcErr(adbc.StatusIO, err, "get dataset %s.%s", catalog, schema)
 	}
 	return []string{schema}, nil

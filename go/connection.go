@@ -1129,7 +1129,8 @@ func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption
 			Scopes:          c.impersonateScopes,
 			Lifetime:        lifetime,
 		}
-		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impCfg)
+		// the configured auth is the source identity; without it the SDK falls back to ADC
+		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impCfg, authOptions...)
 		if err != nil {
 			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,

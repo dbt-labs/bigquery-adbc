@@ -386,6 +386,14 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 // connectionImpl.table.
 func stringToTable(cnxn *connectionImpl, value string) (*bigquery.Table, error) {
 	parts := strings.Split(value, ".")
+	// A legacy domain-scoped project ID (example.com:my-project) contains dots, but dataset and
+	// table IDs can't contain dots or colons, so the project ends at the first dot after the colon.
+	if colon := strings.LastIndexByte(value, ':'); colon >= 0 {
+		if dot := strings.IndexByte(value[colon:], '.'); dot >= 0 {
+			parts = strings.Split(value[colon:], ".")
+			parts[0] = value[:colon+dot]
+		}
+	}
 	projectID, datasetID := cnxn.catalog, cnxn.dbSchema
 	var tableID string
 	switch len(parts) {

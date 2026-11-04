@@ -184,6 +184,12 @@ const (
 	// authorized view on the listed source datasets. Idempotent — views
 	// already authorized on a dataset are skipped.
 	OptionJsonAuthorizeViewToDatasets = "adbc.bigquery.dataset.authorize_view_to_datasets"
+	// OptionJsonGetDatasetLocation accepts a JSON object {project, dataset}
+	// and makes ExecuteQuery return the dataset's location via Dataset.Metadata
+	// (datasets.get) as a single `location` column: one row, or none when the
+	// dataset does not exist. Unlike INFORMATION_SCHEMA.SCHEMATA, this does not
+	// count against the INFORMATION_SCHEMA query rate limit.
+	OptionJsonGetDatasetLocation = "bigquery.dataset.get_location"
 
 	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
 	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility

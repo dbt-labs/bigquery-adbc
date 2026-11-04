@@ -11,13 +11,18 @@ package bigquery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
+	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"google.golang.org/api/googleapi"
 )
 
 // emptyResult returns a record reader with an empty schema/no batches, used
@@ -234,4 +239,59 @@ func (st *statement) executeUpdateTableDescription(ctx context.Context) (array.R
 		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "update table description")
 	}
 	return emptyResult()
+}
+
+// executeGetDatasetLocation returns the location of the dataset named by the
+// JSON option value {project, dataset}, read with datasets.get. The result has
+// one `location` row, or no rows when the dataset does not exist.
+func (st *statement) executeGetDatasetLocation(ctx context.Context) (array.RecordReader, int64, error) {
+	var ref struct {
+		Project string `json:"project"`
+		Dataset string `json:"dataset"`
+	}
+	if err := json.Unmarshal([]byte(st.getDatasetLocation), &ref); err != nil {
+		return nil, -1, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] parse get_location JSON: %v", err),
+		}
+	}
+	if ref.Project == "" || ref.Dataset == "" {
+		return nil, -1, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] get_location requires a project and a dataset, got %q", st.getDatasetLocation),
+		}
+	}
+
+	var locations []string
+	md, err := st.cnxn.datasetInProject(ref.Project, ref.Dataset).Metadata(ctx)
+	if err == nil {
+		locations = []string{md.Location}
+	} else if !isDatasetNotFound(err) {
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "get dataset metadata for %s.%s", ref.Project, ref.Dataset)
+	}
+	return datasetLocationResult(st.cnxn.Alloc, locations)
+}
+
+// isDatasetNotFound reports whether err is datasets.get's 404 for a missing
+// dataset. A missing project is also a 404 ("Project ... is not found"), but
+// that is a configuration error, not an absent dataset.
+func isDatasetNotFound(err error) bool {
+	apiErr, ok := errors.AsType[*googleapi.Error](err)
+	return ok && apiErr.Code == http.StatusNotFound && strings.HasPrefix(apiErr.Message, "Not found: Dataset")
+}
+
+func datasetLocationResult(alloc memory.Allocator, locations []string) (array.RecordReader, int64, error) {
+	schema := arrow.NewSchema([]arrow.Field{{Name: "location", Type: arrow.BinaryTypes.String}}, nil)
+	builder := array.NewStringBuilder(alloc)
+	defer builder.Release()
+	builder.AppendValues(locations, nil)
+	arr := builder.NewArray()
+	defer arr.Release()
+	rec := array.NewRecordBatch(schema, []arrow.Array{arr}, int64(len(locations)))
+	defer rec.Release()
+	reader, err := array.NewRecordReader(schema, []arrow.RecordBatch{rec})
+	if err != nil {
+		return nil, -1, err
+	}
+	return reader, int64(len(locations)), nil
 }

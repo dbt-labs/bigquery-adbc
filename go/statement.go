@@ -88,6 +88,8 @@ type statement struct {
 	tableDescription string
 	// JSON {view: [{project, dataset}, ...]} of authorized-view grants.
 	authorizeViewToDatasets string
+	// JSON {project, dataset} of the dataset whose location to return.
+	getDatasetLocation string
 
 	// Legacy CSV ingest — separate from the new ADBC bulk-ingest API.
 	ingestPath          string
@@ -232,6 +234,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return st.tableDescription, nil
 	case OptionJsonAuthorizeViewToDatasets:
 		return st.authorizeViewToDatasets, nil
+	case OptionJsonGetDatasetLocation:
+		return st.getDatasetLocation, nil
 	case OptionStringIngestFileDelimiter:
 		return st.ingestFileDelimiter, nil
 	case OptionStringIngestPath:
@@ -474,6 +478,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		st.tableDescription = v
 	case OptionJsonAuthorizeViewToDatasets:
 		st.authorizeViewToDatasets = v
+	case OptionJsonGetDatasetLocation:
+		st.getDatasetLocation = v
 	case OptionStringIngestPath:
 		st.ingestPath = v
 	case OptionStringIngestFileDelimiter:
@@ -612,6 +618,8 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		return st.executeUpdateTableDescription(ctx)
 	case st.authorizeViewToDatasets != "":
 		return st.executeAuthorizeViewToDatasets(ctx)
+	case st.getDatasetLocation != "":
+		return st.executeGetDatasetLocation(ctx)
 	case st.queryConfig.Q == "":
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",

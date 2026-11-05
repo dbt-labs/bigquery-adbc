@@ -72,6 +72,7 @@ func (st *statement) executeCSVIngest(ctx context.Context) (array.RecordReader, 
 	fileCfg := &loader.Src.(*bigquery.ReaderSource).FileConfig
 	fileCfg.SourceFormat = bigquery.CSV
 	fileCfg.SkipLeadingRows = 1
+	fileCfg.AllowQuotedNewlines = true
 	fileCfg.FieldDelimiter = st.ingestFileDelimiter
 
 	if st.explicitSchema != nil {

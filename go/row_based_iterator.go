@@ -45,9 +45,6 @@ type RowBasedArrowIterator struct {
 	schema bigquery.Schema
 	alloc  memory.Allocator
 	done   bool
-
-	buf    bytes.Buffer
-	writer *ipc.Writer
 }
 
 func newRowBasedArrowIterator(iter *bigquery.RowIterator, alloc memory.Allocator) bigquery.ArrowIterator {
@@ -63,7 +60,7 @@ func newRowBasedArrowIterator(iter *bigquery.RowIterator, alloc memory.Allocator
 // bigquery.NewArrowIteratorReader downstream.
 func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	if l.done {
-		return nil, l.finish()
+		return nil, iterator.Done
 	}
 
 	const batchSize = 1000
@@ -83,7 +80,7 @@ func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	}
 
 	if len(rows) == 0 {
-		return nil, l.finish()
+		return nil, iterator.Done
 	}
 
 	batch, err := rowsToArrowRecordBatch(l.schema, rows, l.alloc)
@@ -103,32 +100,17 @@ func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 }
 
 func (l *RowBasedArrowIterator) serialize(batch arrow.RecordBatch) ([]byte, error) {
-	if l.writer == nil {
-		l.writer = ipc.NewWriter(&l.buf, ipc.WithSchema(batch.Schema()), ipc.WithAllocator(l.alloc))
-	}
-
-	l.buf.Reset()
-	if err := l.writer.Write(batch); err != nil {
+	payload, err := ipc.GetRecordBatchPayload(batch, ipc.WithAllocator(l.alloc))
+	if err != nil {
 		return nil, err
 	}
+	defer payload.Release()
 
-	data := make([]byte, l.buf.Len())
-	copy(data, l.buf.Bytes())
-	return data, nil
-}
-
-func (l *RowBasedArrowIterator) finish() error {
-	if l.writer == nil {
-		return iterator.Done
+	var buf bytes.Buffer
+	if _, err := payload.WritePayload(&buf); err != nil {
+		return nil, err
 	}
-
-	err := l.writer.Close()
-	l.writer = nil
-	l.buf.Reset()
-	if err != nil {
-		return err
-	}
-	return iterator.Done
+	return buf.Bytes(), nil
 }
 
 // Schema returns the BigQuery schema of the underlying row iterator.
@@ -149,8 +131,13 @@ func (l *RowBasedArrowIterator) SerializedArrowSchema() []byte {
 	}
 	arrowSchema := arrow.NewSchema(fields, nil)
 
+	payload := ipc.GetSchemaPayload(arrowSchema, l.alloc)
+	defer payload.Release()
+
 	var buf bytes.Buffer
-	_ = ipc.NewWriter(&buf, ipc.WithSchema(arrowSchema))
+	if _, err := payload.WritePayload(&buf); err != nil {
+		log.Fatalf("Error serializing schema: %v", err)
+	}
 	return buf.Bytes()
 }
 

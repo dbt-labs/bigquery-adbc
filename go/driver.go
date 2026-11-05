@@ -187,6 +187,12 @@ const (
 	// authorized view on the listed source datasets. Idempotent — views
 	// already authorized on a dataset are skipped.
 	OptionJsonAuthorizeViewToDatasets = "adbc.bigquery.dataset.authorize_view_to_datasets"
+	// OptionJsonGetDatasetLocation accepts a JSON object {project, dataset}
+	// and makes ExecuteQuery return the dataset's location via Dataset.Metadata
+	// (datasets.get) as a single `location` column: one row, or none when the
+	// dataset does not exist. Unlike INFORMATION_SCHEMA.SCHEMATA, this does not
+	// count against the INFORMATION_SCHEMA query rate limit.
+	OptionJsonGetDatasetLocation = "bigquery.dataset.get_location"
 
 	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
 	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
@@ -271,6 +277,11 @@ const (
 	// list response and table_constraints is left null. Depths that include
 	// columns are unaffected. Default is false.
 	OptionGetObjectsSkipTableMetadata = "bigquery.get_objects.skip_table_metadata"
+
+	// OptionGetObjectsDisableWildcards, when true, makes GetObjects perform 
+	// an exact match lookup against the provided filters instead of trying to use
+	// regex wildcards.
+	OptionGetObjectsDisableWildcards = "bigquery.get_objects.disable_wildcards"
 )
 
 var (
@@ -384,6 +395,14 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 // connectionImpl.table.
 func stringToTable(cnxn *connectionImpl, value string) (*bigquery.Table, error) {
 	parts := strings.Split(value, ".")
+	// A legacy domain-scoped project ID (example.com:my-project) contains dots, but dataset and
+	// table IDs can't contain dots or colons, so the project ends at the first dot after the colon.
+	if colon := strings.LastIndexByte(value, ':'); colon >= 0 {
+		if dot := strings.IndexByte(value[colon:], '.'); dot >= 0 {
+			parts = strings.Split(value[colon:], ".")
+			parts[0] = value[:colon+dot]
+		}
+	}
 	projectID, datasetID := cnxn.catalog, cnxn.dbSchema
 	var tableID string
 	switch len(parts) {

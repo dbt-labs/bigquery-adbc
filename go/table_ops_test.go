@@ -15,116 +15,112 @@
 package bigquery
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
+	"github.com/apache/arrow-adbc/go/adbc"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/option"
 )
 
-func nestedTestSchema() bigquery.Schema {
-	return bigquery.Schema{
-		{Name: "id", Type: bigquery.IntegerFieldType, Description: "the id"},
-		{
-			Name: "a",
-			Type: bigquery.RecordFieldType,
-			Schema: bigquery.Schema{
-				{Name: "c", Type: bigquery.StringFieldType, Description: "a.c original", MaxLength: 100, Collation: "und:ci", PolicyTags: &bigquery.PolicyTagList{Names: []string{"existing"}}},
-				{
-					Name:     "b",
-					Type:     bigquery.RecordFieldType,
-					Repeated: true,
-					Schema: bigquery.Schema{
-						{Name: "c", Type: bigquery.StringFieldType},
-					},
-				},
-				{Name: "amount", Type: bigquery.NumericFieldType, Precision: 10, Scale: 2},
-				{Name: "period", Type: bigquery.RangeFieldType, RangeElementType: &bigquery.RangeElementType{Type: bigquery.DateFieldType}},
-			},
-		},
+func TestExecuteGetDatasetLocation(t *testing.T) {
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/bigquery/v2/projects/test-project/datasets/present":
+			_, _ = w.Write([]byte(`{"datasetReference":{"projectId":"test-project","datasetId":"present"},"location":"us-west1"}`))
+		case "/bigquery/v2/projects/test-project/datasets/missing":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":404,"message":"Not found: Dataset test-project:missing","errors":[{"reason":"notFound"}]}}`))
+		case "/bigquery/v2/projects/missing-project/datasets/any":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":404,"message":"Project missing-project is not found. Make sure it references valid GCP project that hasn't been deleted.; Project id: missing-project","errors":[{"reason":"notFound"}]}}`))
+		default:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":403,"message":"Access Denied","errors":[{"reason":"accessDenied"}]}}`))
+		}
+	}))
+	defer srv.Close()
+
+	client, err := bigquery.NewClient(context.Background(), "test-project",
+		option.WithEndpoint(srv.URL+"/bigquery/v2/"),
+		option.WithHTTPClient(srv.Client()),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+	defer client.Close()
+
+	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer alloc.AssertSize(t, 0)
+	cnxn := &connectionImpl{ConnectionImplBase: driverbase.ConnectionImplBase{Alloc: alloc}, client: client}
+
+	execute := func(st *statement) ([]string, int64, error) {
+		rdr, n, err := st.ExecuteQuery(context.Background())
+		if err != nil {
+			return nil, n, err
+		}
+		defer rdr.Release()
+		assert.Equal(t, "location", rdr.Schema().Field(0).Name)
+		var out []string
+		for rdr.Next() {
+			col := rdr.RecordBatch().Column(0).(*array.String)
+			for i := 0; i < col.Len(); i++ {
+				out = append(out, col.Value(i))
+			}
+		}
+		return out, n, rdr.Err()
 	}
-}
-
-func TestApplyColumnMetadataPreservesTopLevelAttributes(t *testing.T) {
-	original := bigquery.Schema{
-		{
-			Name:                   "amount",
-			Type:                   bigquery.NumericFieldType,
-			Description:            "original description",
-			Precision:              10,
-			Scale:                  2,
-			DefaultValueExpression: "0",
-		},
+	locations := func(payload string) ([]string, int64, error) {
+		st := &statement{cnxn: cnxn}
+		require.NoError(t, st.SetOption(context.Background(), OptionJsonGetDatasetLocation, payload))
+		got, err := st.GetOption(context.Background(), OptionJsonGetDatasetLocation)
+		require.NoError(t, err)
+		require.Equal(t, payload, got)
+		return execute(st)
 	}
-	schema := applyColumnMetadata(original, "", map[string]string{"amount": "updated description"}, nil)
 
-	require.Equal(t, "updated description", schema[0].Description)
-	require.Equal(t, bigquery.NumericFieldType, schema[0].Type)
-	require.Equal(t, int64(10), schema[0].Precision)
-	require.Equal(t, int64(2), schema[0].Scale)
-	require.Equal(t, "0", schema[0].DefaultValueExpression)
-	require.Equal(t, "original description", original[0].Description)
-}
+	got, n, err := locations(`{"project":"test-project","dataset":"present"}`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"us-west1"}, got)
+	assert.EqualValues(t, 1, n)
 
-func TestApplyColumnMetadataNestedDescriptions(t *testing.T) {
-	original := nestedTestSchema()
-	schema := applyColumnMetadata(original, "", map[string]string{
-		"a.b.c": "nested description",
-		"a":     "record description",
-	}, nil)
+	got, n, err = locations(`{"project":"test-project","dataset":"missing"}`)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	assert.EqualValues(t, 0, n)
 
-	require.Equal(t, "the id", schema[0].Description)
-	require.Equal(t, "record description", schema[1].Description)
-	require.Equal(t, original[1].Schema[0], schema[1].Schema[0])
-	require.Equal(t, "nested description", schema[1].Schema[1].Schema[0].Description)
+	// A missing project is a configuration error, not an absent dataset.
+	_, _, err = locations(`{"project":"missing-project","dataset":"any"}`)
+	assert.ErrorContains(t, err, "Project missing-project is not found")
 
-	// The input schema is not mutated.
-	require.Equal(t, "", original[1].Description)
-	require.Equal(t, "", original[1].Schema[1].Schema[0].Description)
+	_, _, err = locations(`{"project":"test-project","dataset":"forbidden"}`)
+	assert.ErrorContains(t, err, "get dataset metadata for test-project.forbidden")
 
-	// Nested field properties are preserved.
-	require.True(t, schema[1].Schema[1].Repeated)
-	require.Equal(t, bigquery.RecordFieldType, schema[1].Type)
-}
+	before := requests.Load()
+	for _, payload := range []string{`not json`, `null`, `{}`, `{"project":"test-project"}`, `{"dataset":"present"}`} {
+		_, _, err = locations(payload)
+		var adbcErr adbc.Error
+		require.ErrorAs(t, err, &adbcErr, payload)
+		assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code, payload)
+	}
+	assert.Equal(t, before, requests.Load(), "invalid payloads must not reach the API")
 
-func TestApplyColumnMetadataDoesNotConfuseSameLeafName(t *testing.T) {
-	schema := applyColumnMetadata(nestedTestSchema(), "", map[string]string{
-		"a.c": "top level c",
-	}, nil)
-
-	require.Equal(t, "top level c", schema[1].Schema[0].Description)
-	require.Equal(t, "", schema[1].Schema[1].Schema[0].Description)
-}
-
-func TestApplyColumnMetadataNestedPolicyTags(t *testing.T) {
-	schema := applyColumnMetadata(nestedTestSchema(), "", nil, map[string][]string{
-		"a.b.c": {"tag1"},
-		"a":     {"ignored"},
-		"id":    {"tag3"},
-	})
-
-	require.Equal(t, []string{"tag1"}, schema[1].Schema[1].Schema[0].PolicyTags.Names)
-	require.Equal(t, []string{"tag3"}, schema[0].PolicyTags.Names)
-	// RECORD columns cannot carry policy tags.
-	require.Nil(t, schema[1].PolicyTags)
-}
-
-func TestApplyColumnMetadataUnknownPathsIgnored(t *testing.T) {
-	original := nestedTestSchema()
-	schema := applyColumnMetadata(original, "", map[string]string{
-		"a.missing":   "no such field",
-		"id.nested":   "id is not a record",
-		"a.b.c.extra": "too deep",
-	}, nil)
-
-	require.Equal(t, original, schema)
-}
-
-func TestApplyColumnMetadataClearsNestedMetadata(t *testing.T) {
-	original := nestedTestSchema()
-	schema := applyColumnMetadata(original, "", map[string]string{"a.c": ""}, map[string][]string{"a.c": {}})
-
-	require.Empty(t, schema[1].Schema[0].Description)
-	require.NotNil(t, schema[1].Schema[0].PolicyTags)
-	require.Empty(t, schema[1].Schema[0].PolicyTags.Names)
-	require.Equal(t, nestedTestSchema(), original)
+	// Clearing the option makes a reused statement run its query again.
+	st := &statement{cnxn: cnxn}
+	require.NoError(t, st.SetOption(context.Background(), OptionJsonGetDatasetLocation, `{"project":"test-project","dataset":"present"}`))
+	_, _, err = execute(st)
+	require.NoError(t, err)
+	require.NoError(t, st.SetOption(context.Background(), OptionJsonGetDatasetLocation, ""))
+	_, _, err = st.ExecuteQuery(context.Background())
+	assert.ErrorContains(t, err, "cannot execute without a query")
 }

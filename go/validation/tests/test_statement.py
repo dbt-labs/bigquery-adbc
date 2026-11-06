@@ -12,16 +12,86 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 import uuid
 
 import adbc_drivers_validation.tests.statement as statement_tests
+import pyarrow
 
 from . import bigquery, utils
+
+RESULT_BUFFER_SIZE = "adbc.bigquery.sql.query.result_buffer_size"
 
 
 def pytest_generate_tests(metafunc) -> None:
     quirks = [bigquery.get_quirks(metafunc.config.getoption("vendor_version"))]
     return statement_tests.generate_tests(quirks, metafunc)
+
+
+def run_without_hanging(fn, timeout: float = 60) -> None:
+    errors = []
+
+    def target() -> None:
+        try:
+            fn()
+        except Exception as e:
+            errors.append(e)
+
+    worker = threading.Thread(target=target, daemon=True)
+    worker.start()
+    worker.join(timeout=timeout)
+    assert not worker.is_alive(), f"driver did not return within {timeout}s"
+    assert not errors, errors
+
+
+def execute_bound_query(cursor, query: str, parameters: pyarrow.RecordBatch):
+    statement = cursor.adbc_statement
+    statement.set_options(**{RESULT_BUFFER_SIZE: 1})
+    statement.set_sql_query(query)
+    statement.bind(parameters)
+    handle, _ = statement.execute_query()
+    return pyarrow.RecordBatchReader._import_from_c(handle.address)
+
+
+def test_bound_parameters_with_results_larger_than_buffer(driver, conn) -> None:
+    values = []
+
+    def execute_and_read() -> None:
+        with conn.cursor() as cursor:
+            reader = execute_bound_query(
+                cursor, "SELECT ? AS x", pyarrow.record_batch({"p": [1, 2, 3]})
+            )
+            values.extend(reader.read_all()["x"].to_pylist())
+
+    run_without_hanging(execute_and_read)
+    assert sorted(values) == [1, 2, 3]
+
+
+def test_bound_parameters_result_dropped_unread(driver, conn) -> None:
+    def execute_and_drop() -> None:
+        with conn.cursor() as cursor:
+            reader = execute_bound_query(
+                cursor, "SELECT ? AS x", pyarrow.record_batch({"p": [1, 2, 3]})
+            )
+            reader.close()
+
+    run_without_hanging(execute_and_drop)
+
+
+def test_result_dropped_after_partial_read(driver, conn) -> None:
+    def execute_and_drop() -> None:
+        with conn.cursor() as cursor:
+            statement = cursor.adbc_statement
+            statement.set_options(**{RESULT_BUFFER_SIZE: 1})
+            statement.set_sql_query(
+                "SELECT x FROM UNNEST(GENERATE_ARRAY(1, 100000)) AS x"
+            )
+            handle, _ = statement.execute_query()
+            reader = pyarrow.RecordBatchReader._import_from_c(handle.address)
+            reader.read_next_batch()
+            reader.close()
+
+    run_without_hanging(execute_and_drop)
 
 
 class TestStatement(statement_tests.TestStatement):

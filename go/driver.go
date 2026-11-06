@@ -169,12 +169,15 @@ const (
 	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
 	// OptionJsonUpdateTableColumnsDescription accepts a JSON object
 	// {column: description} to be applied to the destination table
-	// specified by OptionStringQueryDestinationTable.
+	// specified by OptionStringQueryDestinationTable. A column key is a
+	// dot-separated path, so fields nested inside RECORD columns are
+	// addressed as `a.b.c`.
 	OptionJsonUpdateTableColumnsDescription = "adbc.bigquery.table.update_columns_description"
 	// OptionJsonUpdateTableColumnsPolicyTags accepts a JSON object
 	// {column: [tag_id, ...]} setting BigQuery policy tags on individual
-	// columns of the destination table. RECORD columns are skipped
-	// (BigQuery does not support policy tags on nested types).
+	// columns of the destination table. Column keys are dot-separated
+	// paths, as for OptionJsonUpdateTableColumnsDescription. RECORD columns
+	// are skipped (policy tags cannot be attached to RECORD fields themselves).
 	OptionJsonUpdateTableColumnsPolicyTags = "adbc.bigquery.table.update_columns_policy_tags"
 	// OptionStringUpdateTableDescriptionValue sets the table-level
 	// description via Table.Update on the destination table.

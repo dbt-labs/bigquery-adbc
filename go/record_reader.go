@@ -41,7 +41,6 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/googleapis/gax-go/v2/apierror"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/grpc/codes"
 )
@@ -311,19 +310,22 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Cl
 
 func streamRecordBatches(ctx context.Context, source array.RecordReader, result *reader, ch chan<- arrow.RecordBatch) {
 	defer close(ch)
+	result.setErr(sendRecordBatches(ctx, source, ch))
+}
+
+func sendRecordBatches(ctx context.Context, source array.RecordReader, ch chan<- arrow.RecordBatch) error {
 	defer source.Release()
-	for source.Next() {
+	for ctx.Err() == nil && source.Next() {
 		rec := source.RecordBatch()
 		rec.Retain()
 		select {
 		case ch <- rec:
 		case <-ctx.Done():
 			rec.Release()
-			result.setErr(checkContext(ctx, nil))
-			return
+			return checkContext(ctx, nil)
 		}
 	}
-	result.setErr(checkContext(ctx, source.Err()))
+	return checkContext(ctx, source.Err())
 }
 
 func drainRecordBatches(ch <-chan arrow.RecordBatch) {
@@ -332,7 +334,7 @@ func drainRecordBatches(ch <-chan arrow.RecordBatch) {
 	}
 }
 
-func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, client *bigquery.Client, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), linkFailedJob bool) (int64, error) {
+func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, rec arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), addSource func(source array.RecordReader), linkFailedJob bool) (int64, error) {
 	totalRows := int64(-1)
 	for i := range int(rec.NumRows()) {
 		parameters, err := getQueryParameter(rec, i, parameterMode)
@@ -362,15 +364,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			return -1, err
 		}
 		rdrSchema(schema)
-		group.Go(func() error {
-			defer rdr.Release()
-			for rdr.Next() && ctx.Err() == nil {
-				rec := rdr.RecordBatch()
-				rec.Retain()
-				ch <- rec
-			}
-			return checkContext(ctx, rdr.Err())
-		})
+		addSource(rdr)
 	}
 	return totalRows, nil
 }
@@ -383,49 +377,51 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, client *bigquery.
 	}
 	defer boundParameters.Release()
 
-	totalRows = 0
-	// BigQuery can expose result sets as multiple streams when using certain APIs
-	// for now lets keep this and set the number of channels to 1
-	// when we need to adapt to multiple streams we can change the value here
-	chs := make([]chan arrow.RecordBatch, 1)
-
-	ch := make(chan arrow.RecordBatch, resultRecordBufferSize)
-	group, ctx := errgroup.WithContext(ctx)
-	// TODO(lidavidm): we never actually make use of concurrency
-	group.SetLimit(prefetchConcurrency)
 	ctx, cancelFn := context.WithCancel(ctx)
-	chs[0] = ch
-
-	defer func() {
-		if err != nil {
-			close(ch)
-			cancelFn()
-		}
-	}()
-
-	rdr := &reader{
-		refCount: 1,
-		chs:      chs,
-		err:      nil,
-		cancelFn: cancelFn,
-		schema:   nil,
-	}
+	var schema *arrow.Schema
+	var sources []array.RecordReader
+	totalRows = 0
 
 	for boundParameters.Next() {
 		rec := boundParameters.RecordBatch()
 		// Each call to Record() on the record reader is allowed to release the previous record
 		// and since we're doing this sequentially
 		// we don't need to call rec.Retain() here and call call rec.Release() in queryRecordWithSchemaCallback
-		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, client, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
-			rdr.schema = schema
+		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, client, query, rec, parameterMode, alloc, func(s *arrow.Schema) {
+			schema = s
+		}, func(source array.RecordReader) {
+			sources = append(sources, source)
 		}, linkFailedJob)
 		if err != nil {
+			cancelFn()
+			for _, source := range sources {
+				source.Release()
+			}
 			return nil, -1, err
 		}
 		totalRows += batchRows
 	}
-	rdr.err = group.Wait()
-	defer close(ch)
+
+	ch := make(chan arrow.RecordBatch, resultRecordBufferSize)
+	rdr := &reader{
+		refCount: 1,
+		chs:      []chan arrow.RecordBatch{ch},
+		cancelFn: cancelFn,
+		schema:   schema,
+	}
+
+	go func() {
+		defer close(ch)
+		for i, source := range sources {
+			if err := sendRecordBatches(ctx, source, ch); err != nil {
+				for _, remaining := range sources[i+1:] {
+					remaining.Release()
+				}
+				rdr.setErr(err)
+				return
+			}
+		}
+	}()
 	return rdr, totalRows, nil
 }
 

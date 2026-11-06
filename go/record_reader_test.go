@@ -30,6 +30,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -278,4 +280,89 @@ func TestIpcReaderFromArrowIteratorPropagatesReaderError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, rdr)
 	require.Nil(t, schema)
+}
+
+func TestReleaseDoesNotWaitForStalledResultStream(t *testing.T) {
+	const (
+		projectID   = "test-project"
+		location    = "us-west1"
+		queriesPath = "/bigquery/v2/projects/test-project/queries/"
+	)
+
+	secondPageRequested := make(chan struct{})
+	var secondPageOnce sync.Once
+	unblock := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		schema := `{"fields":[{"name":"x","type":"INTEGER","mode":"NULLABLE"}]}`
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/bigquery/v2/projects/test-project/jobs":
+			var submitted struct {
+				JobReference struct {
+					JobID string `json:"jobId"`
+				} `json:"jobReference"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
+				t.Errorf("decode submitted job: %v", err)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"configuration":{"query":{"query":"SELECT x","useLegacySql":false}},"jobReference":{"projectId":%q,"location":%q,"jobId":%q},"status":{"state":"DONE"},"statistics":{"creationTime":"1700000000000","startTime":"1700000000100","endTime":"1700000000200","query":{"statementType":"SELECT","schema":%s}}}`, projectID, location, submitted.JobReference.JobID, schema)
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, queriesPath):
+			jobID := strings.TrimPrefix(r.URL.Path, queriesPath)
+			params := r.URL.Query()
+			switch {
+			case params.Get("maxResults") == "0":
+				_, _ = fmt.Fprintf(w, `{"jobComplete":true,"jobReference":{"projectId":%q,"location":%q,"jobId":%q},"schema":%s,"totalRows":"4"}`, projectID, location, jobID, schema)
+			case params.Get("pageToken") == "":
+				_, _ = fmt.Fprintf(w, `{"jobComplete":true,"jobReference":{"projectId":%q,"location":%q,"jobId":%q},"schema":%s,"totalRows":"4","pageToken":"second","rows":[{"f":[{"v":"1"}]},{"f":[{"v":"2"}]}]}`, projectID, location, jobID, schema)
+			default:
+				secondPageOnce.Do(func() { close(secondPageRequested) })
+				<-unblock
+			}
+
+		default:
+			t.Errorf("unexpected BigQuery request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	defer close(unblock)
+
+	client, err := bigquery.NewClient(
+		context.Background(),
+		projectID,
+		option.WithEndpoint(srv.URL+"/bigquery/v2/"),
+		option.WithHTTPClient(srv.Client()),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+	defer client.Close()
+
+	query := client.Query("SELECT x")
+	query.Location = location
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.WithValue(context.Background(), ContextKeyUseStorageApiDisabledClient, true)
+	rdr, _, err := runPlainQuery(ctx, logger, client, query, memory.DefaultAllocator, 1, false)
+	require.NoError(t, err)
+
+	select {
+	case <-secondPageRequested:
+	case <-time.After(10 * time.Second):
+		t.Fatal("reader never requested the second page")
+	}
+
+	released := make(chan struct{})
+	go func() {
+		rdr.Release()
+		close(released)
+	}()
+
+	select {
+	case <-released:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Release blocked on a result stream that never completes")
+	}
 }

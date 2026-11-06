@@ -30,6 +30,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"cloud.google.com/go/bigquery"
@@ -55,6 +56,7 @@ type reader struct {
 	chs        []chan arrow.RecordBatch
 	curChIndex int
 	rec        arrow.RecordBatch
+	errMu      sync.Mutex
 	err        error
 
 	cancelFn context.CancelFunc
@@ -274,12 +276,15 @@ func makeDryRunReader(js *bigquery.JobStatus, jobID string) (array.RecordReader,
 	return rdr, nil
 }
 
-func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, linkFailedJob bool) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
+func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, linkFailedJob bool) (array.RecordReader, int64, error) {
+	ctx, cancelFn := context.WithCancel(ctx)
+
 	arrowIterator, jobStatus, totalRows, err := runQuery(ctx, logger, client, query, false, linkFailedJob, alloc)
 	if err != nil {
+		cancelFn()
 		return nil, -1, err
 	} else if query.DryRun || arrowIterator == nil {
-		// Dry run queries don't have an arrow iterator, so return an empty reader
+		cancelFn()
 		rdr, err := makeDryRunReader(jobStatus, query.JobID)
 		if err != nil {
 			return nil, -1, err
@@ -289,43 +294,42 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Cl
 
 	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, query.JobID, alloc)
 	if err != nil {
+		cancelFn()
 		return nil, -1, err
 	}
 
-	chs := make([]chan arrow.RecordBatch, 1)
-	ctx, cancelFn := context.WithCancel(ctx)
 	ch := make(chan arrow.RecordBatch, resultRecordBufferSize)
-	chs[0] = ch
-
-	defer func() {
-		if err != nil {
-			close(ch)
-			cancelFn()
-		}
-	}()
-
-	bigqueryRdr = &reader{
-		refCount:   1,
-		chs:        chs,
-		curChIndex: 0,
-		err:        nil,
-		cancelFn:   cancelFn,
-		schema:     schema,
+	result := &reader{
+		refCount: 1,
+		chs:      []chan arrow.RecordBatch{ch},
+		cancelFn: cancelFn,
+		schema:   schema,
 	}
+	go streamRecordBatches(ctx, rdr, result, ch)
+	return result, totalRows, nil
+}
 
-	go func() {
-		defer rdr.Release()
-		for rdr.Next() && ctx.Err() == nil {
-			rec := rdr.RecordBatch()
-			rec.Retain()
-			ch <- rec
+func streamRecordBatches(ctx context.Context, source array.RecordReader, result *reader, ch chan<- arrow.RecordBatch) {
+	defer close(ch)
+	defer source.Release()
+	for source.Next() {
+		rec := source.RecordBatch()
+		rec.Retain()
+		select {
+		case ch <- rec:
+		case <-ctx.Done():
+			rec.Release()
+			result.setErr(checkContext(ctx, nil))
+			return
 		}
+	}
+	result.setErr(checkContext(ctx, source.Err()))
+}
 
-		// TODO(lidavidm): doesn't this discard the error?
-		err = checkContext(ctx, rdr.Err())
-		defer close(ch)
-	}()
-	return bigqueryRdr, totalRows, nil
+func drainRecordBatches(ch <-chan arrow.RecordBatch) {
+	for rec := range ch {
+		rec.Release()
+	}
 }
 
 func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, client *bigquery.Client, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), linkFailedJob bool) (int64, error) {
@@ -436,14 +440,20 @@ func (r *reader) Release() {
 		}
 		r.cancelFn()
 		for _, ch := range r.chs {
-			for rec := range ch {
-				rec.Release()
-			}
+			go drainRecordBatches(ch)
 		}
 	}
 }
 
+func (r *reader) setErr(err error) {
+	r.errMu.Lock()
+	defer r.errMu.Unlock()
+	r.err = err
+}
+
 func (r *reader) Err() error {
+	r.errMu.Lock()
+	defer r.errMu.Unlock()
 	return r.err
 }
 

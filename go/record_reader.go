@@ -304,13 +304,11 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Cl
 		cancelFn: cancelFn,
 		schema:   schema,
 	}
-	go streamRecordBatches(ctx, rdr, result, ch)
+	go func() {
+		defer close(ch)
+		result.setErr(sendRecordBatches(ctx, rdr, ch))
+	}()
 	return result, totalRows, nil
-}
-
-func streamRecordBatches(ctx context.Context, source array.RecordReader, result *reader, ch chan<- arrow.RecordBatch) {
-	defer close(ch)
-	result.setErr(sendRecordBatches(ctx, source, ch))
 }
 
 func sendRecordBatches(ctx context.Context, source array.RecordReader, ch chan<- arrow.RecordBatch) error {
@@ -326,12 +324,6 @@ func sendRecordBatches(ctx context.Context, source array.RecordReader, ch chan<-
 		}
 	}
 	return checkContext(ctx, source.Err())
-}
-
-func drainRecordBatches(ch <-chan arrow.RecordBatch) {
-	for rec := range ch {
-		rec.Release()
-	}
 }
 
 func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, rec arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), addSource func(source array.RecordReader), linkFailedJob bool) (int64, error) {
@@ -435,8 +427,13 @@ func (r *reader) Release() {
 			r.rec.Release()
 		}
 		r.cancelFn()
+		// Buffered batches are retained and allocated with mallocator, so they
+		// must be released explicitly. Draining until close also waits for the
+		// producer to release its source before Release returns.
 		for _, ch := range r.chs {
-			go drainRecordBatches(ch)
+			for rec := range ch {
+				rec.Release()
+			}
 		}
 	}
 }

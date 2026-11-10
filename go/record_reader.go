@@ -156,6 +156,10 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 		return nil, js, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
 	}
 
+	if mayReturnResults && stats.StatementType == "SCRIPT" && len(iter.Schema) == 0 {
+		mayReturnResults = false
+	}
+
 	var arrowIterator bigquery.ArrowIterator
 	// We need to detect if this actually returned data. Originally we
 	// checked for the presence of a schema, but it turns out statements

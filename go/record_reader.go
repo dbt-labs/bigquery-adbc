@@ -127,7 +127,13 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	}
 
 	if err := js.Err(); err != nil {
-		return nil, js, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "complete job"))
+		jobErr := errToAdbcErr(adbc.StatusInternal, err, "complete job")
+		adbcErr, isAdbcErr := jobErr.(adbc.Error)
+		if bqErr, ok := errors.AsType[*bigquery.Error](err); ok && isAdbcErr {
+			adbcErr.Details = append(adbcErr.Details, &adbc.TextErrorDetail{Name: ErrorDetailJobErrorReason, Detail: bqErr.Reason})
+			jobErr = adbcErr
+		}
+		return nil, js, -1, wrap(jobErr)
 	} else if !js.Done() {
 		return nil, js, -1, wrap(adbc.Error{
 			Code: adbc.StatusInternal,

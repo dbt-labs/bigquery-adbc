@@ -25,6 +25,7 @@ package bigquery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -255,6 +257,70 @@ func TestRunQueryRecoversExistingJobAfterDuplicateInsert(t *testing.T) {
 	}
 	if len(submittedJobIDs) != 2 {
 		t.Fatalf("expected two distinct submitted job IDs, got %d", len(submittedJobIDs))
+	}
+}
+
+func TestRunQueryFailedJobCarriesErrorReason(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		insertBody string
+		wantReason string
+	}{
+		{
+			name:       "failed job",
+			status:     http.StatusOK,
+			insertBody: `{"jobReference":{"projectId":"p","location":"US","jobId":"j"},"status":{"state":"DONE","errorResult":{"reason":"backendError","message":"injected"}}}`,
+			wantReason: "backendError",
+		},
+		{
+			name:       "request error",
+			status:     http.StatusForbidden,
+			insertBody: `{"error":{"code":403,"message":"injected","errors":[{"reason":"accessDenied"}]}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/bigquery/v2/projects/p/jobs" {
+					t.Errorf("unexpected BigQuery request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.insertBody)
+			}))
+			defer srv.Close()
+
+			client, err := bigquery.NewClient(
+				context.Background(),
+				"p",
+				option.WithEndpoint(srv.URL+"/bigquery/v2/"),
+				option.WithHTTPClient(srv.Client()),
+				option.WithoutAuthentication(),
+			)
+			require.NoError(t, err)
+			defer client.Close()
+
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			_, _, _, err = runQuery(context.Background(), logger, client, client.Query("SELECT 1"), false, true, memory.DefaultAllocator)
+
+			var adbcErr adbc.Error
+			require.True(t, errors.As(err, &adbcErr), "got %v", err)
+			var reasons []string
+			for _, detail := range adbcErr.Details {
+				if detail.Key() == ErrorDetailJobErrorReason {
+					value, _ := detail.Serialize()
+					reasons = append(reasons, string(value))
+				}
+			}
+			if tc.wantReason == "" {
+				assert.Empty(t, reasons)
+			} else {
+				assert.Equal(t, []string{tc.wantReason}, reasons)
+				assert.Contains(t, adbcErr.Msg, "(Query: https://console.cloud.google.com/")
+			}
+		})
 	}
 }
 

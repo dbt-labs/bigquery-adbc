@@ -43,12 +43,16 @@ func (st *statement) executeCopyTable(ctx context.Context) (array.RecordReader, 
 			Msg:  "[bq] copy_table requires both source and destination to be set",
 		}
 	}
-	source, err := stringToTable(st.cnxn, st.copyTableSource)
-	if err != nil {
-		return nil, -1, adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("[bq] invalid source table: %v", err),
+	var sources []*bigquery.Table
+	for _, value := range strings.Split(st.copyTableSource, ",") {
+		source, err := stringToTable(st.cnxn, value)
+		if err != nil {
+			return nil, -1, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid source table: %v", err),
+			}
 		}
+		sources = append(sources, st.cnxn.client.DatasetInProject(source.ProjectID, source.DatasetID).Table(source.TableID))
 	}
 	dest, err := stringToTable(st.cnxn, st.copyTableDestination)
 	if err != nil {
@@ -57,9 +61,7 @@ func (st *statement) executeCopyTable(ctx context.Context) (array.RecordReader, 
 			Msg:  fmt.Sprintf("[bq] invalid destination table: %v", err),
 		}
 	}
-	copier := st.cnxn.client.DatasetInProject(dest.ProjectID, dest.DatasetID).Table(dest.TableID).CopierFrom(
-		st.cnxn.client.DatasetInProject(source.ProjectID, source.DatasetID).Table(source.TableID),
-	)
+	copier := st.cnxn.client.DatasetInProject(dest.ProjectID, dest.DatasetID).Table(dest.TableID).CopierFrom(sources...)
 	if st.copyTableWriteDisposition != "" {
 		wd, err := stringToTableWriteDisposition(st.copyTableWriteDisposition)
 		if err != nil {

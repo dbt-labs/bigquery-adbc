@@ -349,7 +349,10 @@ func (f *fakeDatasetsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.getCalls.Add(1)
 		id := strings.TrimPrefix(r.URL.Path, prefix+"/")
 		status := f.getStatus
-		if status == 0 && !slices.Contains(f.datasets, id) {
+		switch {
+		case r.URL.Query().Get("datasetView") != "METADATA":
+			status = http.StatusForbidden
+		case status == 0 && !slices.Contains(f.datasets, id):
 			status = http.StatusNotFound
 		}
 		if status != 0 {

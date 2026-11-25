@@ -166,7 +166,7 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 const datasetsListPageSize = 1000
 
 func (c *connectionImpl) getExactDBSchema(ctx context.Context, catalog string, schema string) ([]string, error) {
-	if _, err := c.client.DatasetInProject(catalog, schema).Metadata(ctx); err != nil {
+	if _, err := c.datasetMetadata(ctx, catalog, schema); err != nil {
 		return nil, errToAdbcErr(adbc.StatusIO, err, "get dataset %s.%s", catalog, schema)
 	}
 	return []string{schema}, nil
@@ -1220,9 +1220,9 @@ func (c *connectionImpl) table(project, dataset, table string) *bigquery.Table {
 	return c.client.DatasetInProject(project, dataset).Table(table)
 }
 
-// datasetInProject returns a Dataset handle bound to this connection's client.
-func (c *connectionImpl) datasetInProject(projectID, datasetID string) *bigquery.Dataset {
-	return c.client.DatasetInProject(projectID, datasetID)
+func (c *connectionImpl) datasetMetadata(ctx context.Context, projectID, datasetID string) (*bigquery.DatasetMetadata, error) {
+	// The metadata view only requires datasets.get under fine-grained ACL enforcement.
+	return c.client.DatasetInProject(projectID, datasetID).MetadataWithOptions(ctx, bigquery.WithDatasetView(bigquery.DatasetMetadataView))
 }
 
 // getOrCreateStorageApiDisabledClient lazily constructs (and caches) a

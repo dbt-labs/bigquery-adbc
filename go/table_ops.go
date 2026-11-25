@@ -197,7 +197,7 @@ func (st *statement) executeAuthorizeViewToDatasets(ctx context.Context) (array.
 		}
 		viewTable := st.cnxn.table(view.ProjectID, view.DatasetID, view.TableID)
 		for _, d := range datasets {
-			ds := st.cnxn.datasetInProject(d.Project, d.Dataset)
+			ds := st.cnxn.client.DatasetInProject(d.Project, d.Dataset)
 			md, err := ds.Metadata(ctx)
 			if err != nil {
 				return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "get dataset metadata for %s.%s", d.Project, d.Dataset)
@@ -268,7 +268,7 @@ func (st *statement) executeGetDatasetLocation(ctx context.Context) (array.Recor
 	}
 
 	var locations []string
-	md, err := st.cnxn.datasetInProject(ref.Project, ref.Dataset).Metadata(ctx)
+	md, err := st.cnxn.datasetMetadata(ctx, ref.Project, ref.Dataset)
 	if err == nil {
 		locations = []string{md.Location}
 	} else if !isDatasetNotFound(err) {
@@ -277,7 +277,7 @@ func (st *statement) executeGetDatasetLocation(ctx context.Context) (array.Recor
 	return datasetLocationResult(st.cnxn.Alloc, locations)
 }
 
-// isDatasetNotFound reports whether err is datasets.get's 404 for a missing
+// isDatasetNotFound reports whether datasets.get returned a 404 for a missing
 // dataset. A missing project is also a 404 ("Project ... is not found"), but
 // that is a configuration error, not an absent dataset.
 func isDatasetNotFound(err error) bool {

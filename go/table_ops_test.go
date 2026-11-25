@@ -35,6 +35,7 @@ func TestExecuteGetDatasetLocation(t *testing.T) {
 	var requests atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		assert.Equal(t, "METADATA", r.URL.Query().Get("datasetView"))
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/bigquery/v2/projects/test-project/datasets/present":
@@ -104,7 +105,7 @@ func TestExecuteGetDatasetLocation(t *testing.T) {
 	assert.ErrorContains(t, err, "Project missing-project is not found")
 
 	_, _, err = locations(`{"project":"test-project","dataset":"forbidden"}`)
-	assert.ErrorContains(t, err, "get dataset metadata for test-project.forbidden")
+	assert.ErrorContains(t, err, "get dataset metadata for test-project.forbidden: 403 Forbidden: Access Denied")
 
 	before := requests.Load()
 	for _, payload := range []string{`not json`, `null`, `{}`, `{"project":"test-project"}`, `{"dataset":"present"}`} {
